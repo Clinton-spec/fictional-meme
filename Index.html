@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#060b16">
+<title>PSYCHIC WINNER — Manual Pro</title>
+<link rel="stylesheet" href="psychic-winner-manual-pro.css">
+</head>
+<body>
+<div class="app" id="app">
+
+<header class="top">
+  <div class="brand">
+    <div class="logo">PW</div>
+    <div><div class="brand-name">PSYCHIC WINNER</div><div class="brand-sub">MANUAL PRO · RISE / FALL · <span id="ver">v3.0</span></div></div>
+  </div>
+  <button id="logoutBtn" class="ghost" hidden>LOG OUT</button>
+</header>
+
+<section class="chartbox" id="chartBox">
+
+  <!-- ===== toolbar ===== -->
+  <div class="tb">
+    <button id="symBtn" class="sym" title="Markets &amp; ranking">
+      <b id="symName">SELECT MARKET</b><span id="symPx">—</span><span id="symDx"></span><i>▾</i>
+    </button>
+    <div class="grp" id="tfBtns">
+      <button data-tf="TICK" class="on">TICK</button><button data-tf="5S">5s</button><button data-tf="15S">15s</button>
+      <button data-tf="30S">30s</button><button data-tf="1M">1m</button><button data-tf="5M">5m</button>
+    </div>
+    <div class="grp" id="indBtns">
+      <button id="tgEma" class="on" title="EMA line">EMA</button>
+      <button id="tgZones" class="on" title="Supply / demand zones">S/D</button>
+      <button id="tgSr" class="on" title="Stochastic RSI panel">SRSI</button>
+      <button id="tgSt" class="on" title="Supertrend">ST</button>
+    </div>
+    <div class="grp" id="panBtns">
+      <button data-pan="ind" title="Indicator settings">⚙ SET</button>
+      <button data-pan="sig" title="Signals &amp; auto entry">⚡ SIGNAL<em id="autoTag" hidden>AUTO</em></button>
+      <button data-pan="log" title="Engine log">☰ LOG</button>
+      <button data-pan="trades" title="Trade history">⧉ TRADES</button>
+    </div>
+    <span class="sp"></span>
+    <div class="grp acct">
+      <span class="dot off" id="connDot"></span><span id="connText" class="ct">OFFLINE</span>
+      <select id="acctSel" title="Account"></select><b id="acctBal">—</b>
+    </div>
+    <div class="grp" id="execBtns"><button id="paperBtn" class="on" title="Simulated trades">PAPER</button><button id="liveBtn" title="Real contracts on the selected account">LIVE</button></div>
+    <button id="fsBtn" class="fsb" title="Full screen (M)">⛶ FULL</button>
+  </div>
+
+  <!-- ===== chart stage ===== -->
+  <div class="stage" id="stage">
+    <canvas id="chart"></canvas>
+
+    <div class="tools" id="toolBtns">
+      <button data-tool="cursor" class="on" title="Pan / zoom / crosshair">✥</button>
+      <button data-tool="h" title="Horizontal line">━</button>
+      <button data-tool="l" title="Trend ray (2 clicks)">╱</button>
+      <button data-tool="r" title="Box (2 clicks)">▭</button>
+      <button data-tool="x" title="Eraser — click a drawing">⌫</button>
+      <button id="clrDraw" title="Clear drawings on this market">⌧</button>
+    </div>
+
+    <div class="hud">
+      <div class="hud-top">
+        <div class="meter" id="meter" title="Entry confirmations — click one to require / unrequire it"></div>
+        <div class="q"><div class="qbar"><i id="qBar"></i></div><b id="qVal">Q —</b></div>
+        <span class="chip mut" id="hBias">BIAS —</span>
+        <span class="badge" id="sigBadge">WAITING</span>
+        <button class="chip auto" id="autoChip" title="Auto entry on/off">AUTO OFF</button>
+      </div>
+      <div class="read" id="hRead">—</div>
+    </div>
+
+    <div class="tcard" id="tradeCard" hidden>
+      <div class="tc-h"><b id="tcSide">—</b><span id="tcN">0 / 5</span><b id="tcPL">—</b></div>
+      <div class="bar"><i id="tcBar"></i></div>
+    </div>
+
+    <div class="zoom"><button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button><button id="goLive" title="Back to live edge">LIVE ▸</button></div>
+
+    <!-- market ranking (opens from the symbol button) -->
+    <div class="rankp" id="rankP" hidden>
+      <div class="rk-h">
+        <b>MARKET RANKING</b><span class="tag" id="rankTime">not scanned</span>
+        <label class="switch sm"><input type="checkbox" id="rankAuto"><span></span> refresh 60s</label>
+        <button id="scanBtn" class="btn sm pri">SCAN</button><button id="rankClose" class="btn sm">✕</button>
+      </div>
+      <div class="rk-note">Score 0-100 = 5m/1m trend alignment · EMA position · StochRSI timing · Supertrend side · zone room · volatility · chop. Click a row to switch market.</div>
+      <div class="tbl"><table>
+        <thead><tr><th>#</th><th>MARKET</th><th>BIAS</th><th title="5-minute drift z-score">5M z</th><th title="1-minute drift z-score">1M z</th><th title="Recent / baseline volatility">VOL</th><th title="EMA crossings in last 30 ticks">CHOP</th><th title="Supertrend side">ST</th><th title="Stochastic RSI %K">K</th><th title="Distance to opposing zone">ZONE</th><th>SCORE</th></tr></thead>
+        <tbody id="rankRows"></tbody></table></div>
+    </div>
+
+    <!-- side drawer: indicators / signals / log / trades -->
+    <aside class="drawer" id="drawer" hidden>
+      <div class="dr-h" id="drTabs">
+        <button data-tab="ind">INDICATORS</button><button data-tab="sig">SIGNALS</button><button data-tab="log">LOG</button><button data-tab="trades">TRADES</button>
+        <button id="drClose" class="x">✕</button>
+      </div>
+      <div class="dr-b">
+        <div class="pane" id="paneInd"></div>
+        <div class="pane" id="paneSig"></div>
+        <div class="pane" id="paneLog">
+          <div class="row"><button id="clearLog" class="btn sm">CLEAR</button><button id="exportLog" class="btn sm">EXPORT</button></div>
+          <div class="log" id="logBox"></div>
+        </div>
+        <div class="pane" id="paneTrades">
+          <div class="row"><button id="resetBtn" class="btn sm">RESET SESSION</button></div>
+          <div class="tbl"><table><thead><tr><th>TIME</th><th>MKT</th><th>SIDE</th><th>STAKE</th><th>P/L</th></tr></thead><tbody id="tradeRows"></tbody></table></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="toast" id="toast"></div>
+    <div class="flash" id="flash"></div>
+
+    <!-- OAuth login card -->
+    <div class="login" id="loginCard" hidden>
+      <div class="lg-card">
+        <div class="logo big">PW</div>
+        <h2>Connect your Deriv account</h2>
+        <p>Secure sign-in through Deriv (OAuth). Your password never touches this page.</p>
+        <label id="liAppWrap">Deriv App ID (OAuth client ID)<input id="liApp" placeholder="e.g. 12345" autocomplete="off"></label>
+        <div class="li-ru"><small>Redirect URL to register with Deriv (must match exactly)</small><code id="liRedirect">—</code><button id="liCopy" class="btn sm">COPY</button></div>
+        <details><summary>Advanced</summary>
+          <label>Token proxy URL (optional — only if the browser blocks the token request)<input id="liProxy" placeholder="http://localhost:8787" autocomplete="off"></label>
+        </details>
+        <button id="liGo" class="btn pri full">CONNECT WITH DERIV</button>
+        <div class="li-msg" id="liMsg"></div>
+        <div class="li-warn" id="liFile" hidden>This page is open as a local file. OAuth needs it served over <b>http(s)</b> — e.g. run <code>npx serve</code> in this folder and open <code>http://localhost:3000</code>.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== trade dock (directly under the chart) ===== -->
+  <div class="dock" id="dock">
+    <button id="mRise" class="trade rise" disabled><span>▲ RISE</span><em>—</em><kbd>R · ↑</kbd></button>
+    <div class="mid">
+      <div class="stkrow">
+        <div class="stk"><button id="mMinus" title="Lower stake">−</button><input id="dStake" type="number" value="0.35" min="0.35" step="0.05" inputmode="decimal" title="Stake"><button id="mPlus" title="Raise stake">+</button></div>
+        <button id="mHalf" class="mini" title="Halve stake">½</button><button id="mDouble" class="mini" title="Double stake">×2</button>
+      </div>
+      <div class="durs" id="durBtns" title="Duration in ticks"></div>
+      <div class="mst" id="mStatus">Connect to trade</div>
+    </div>
+    <button id="mFall" class="trade fall" disabled><span>▼ FALL</span><em>—</em><kbd>F · ↓</kbd></button>
+  </div>
+
+  <div class="stats">
+    <div><small>SESSION P/L</small><b id="kPL">$0.00</b></div>
+    <div><small>W / L</small><b id="kWL">0 / 0</b></div>
+    <div><small>WIN RATE</small><b id="kWR">—</b><em id="kBE">breakeven —</em></div>
+    <div><small>TRADES</small><b id="kTrades">0</b></div>
+    <div><small>LAST FILL</small><b id="kFill">—</b></div>
+  </div>
+</section>
+</div>
+<script src="psychic-winner-manual-pro.js"></script>
+</body>
+</html>
