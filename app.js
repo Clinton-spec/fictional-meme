@@ -13,12 +13,12 @@
 
 /* ---------- CONFIG (sellers edit this block) ---------- */
 const CFG = {
-    APP_ID:,                       // your registered Deriv App ID (= OAuth client_id). Empty = the login card asks for it.
-    REDIRECT_URI: "",                 // "" = this page's own URL. Must match the URL registered with Deriv EXACTLY.
+    APP_ID: "33wyCJ77LgV4dpnoWNr9v",                       // your registered Deriv App ID (= OAuth client_id). Empty = the login card asks for it.
+    REDIRECT_URI: "https://clinton-spec.github.io/fictional-meme/",                 // "" = this page's own URL. Must match the URL registered with Deriv EXACTLY.
     SCOPE: "trade",                   // space-separated; only scopes your app is registered for
     AUTH_URL: "https://auth.deriv.com/oauth2/auth",
     TOKEN_URL: "https://auth.deriv.com/oauth2/token",
-    TOKEN_PROXY: "",                  // optional backend that forwards the code exchange (see token-proxy.js)
+    TOKEN_PROXY: "https://pw-token.clintonpanashejochore.workers.dev/",                  // optional backend that forwards the code exchange (see token-proxy.js)
     REST: "https://api.derivws.com"
 };
 
