@@ -36,8 +36,10 @@ const TFS = { TICK: 0, "5S": 5, "15S": 15, "30S": 30, "1M": 60, "5M": 300 };
 const SPAN = { TICK: 120, "5S": 420, "15S": 1200, "30S": 2400, "1M": 4800, "5M": 12000 };
 let RF = { RISE: "CALL", FALL: "PUT" };   // verified against the proposal longcode and auto-corrected
 
-const FACT = [["t5", "5M"], ["t1", "1M"], ["cross", "EMA"], ["srsi", "SRSI"], ["st", "ST"], ["xc", "X-CROSS"], ["zone", "ZONE"], ["zt", "Z-TRIG"], ["vol", "VOL"], ["chop", "CHOP"]];
-const FACT_NAME = { t5: "5-minute trend", t1: "1-minute confirms", cross: "EMA cross", srsi: "StochRSI turn", st: "Supertrend agrees", xc: "EMA + ST double cross", zt: "Zone trigger", zone: "Zone room", vol: "Volatility band", chop: "Not choppy" };
+const MAX_BARS = 1500;
+const FACT = [["t5", "TRD"], ["t1", "SHT"], ["cross", "EMA"], ["x2", "EMA+ST"], ["zp", "ZONE▸"], ["srsi", "SRSI"], ["st", "ST"], ["zone", "ROOM"], ["vol", "VOL"], ["chop", "CHOP"]];
+const FACT_LAB = Object.fromEntries(FACT), TRIGS = ["cross", "x2", "zp"];
+const FACT_NAME = { t5: "Main trend agrees", t1: "Short trend agrees", cross: "EMA cross (price × EMA)", x2: "EMA + ST cross together", zp: "Zone play (break / entry)", srsi: "StochRSI turn", st: "Supertrend side agrees", zone: "Zone room (S/D clear ahead)", vol: "Volatility band", chop: "Not choppy" };
 
 /* ---------- PERSISTENCE ---------- */
 const ls = {
@@ -51,13 +53,12 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const P0 = { emaOn: true, ema: 21, zOn: true, zoneW: 1.5, zoneImp: 4, srOn: true, rsi: 14, stoch: 14, k: 3, d: 3, stOn: true, atr: 20, mul: 4, marks: true };
 const P = Object.assign({}, P0, ls.get("pw3-p", {}));
 const PRESETS = {
-    SAFE: { req: { t5: 1, t1: 1, cross: 1, srsi: 1, st: 1, zone: 1, vol: 1, chop: 1 }, z5Min: 1.2, z1Min: 0.6, holdMin: 3, crossMin: 0.2, crossWin: 2, maxFlips: 2, volCap: 1.6, volMin: 0.5, zoneRoom: 1, srLow: 30, minQ: 70 },
-    BALANCED: { req: { t5: 1, t1: 1, cross: 1, srsi: 0, st: 0, zone: 1, vol: 1, chop: 1 }, z5Min: 1, z1Min: 0.5, holdMin: 3, crossMin: 0.15, crossWin: 2, maxFlips: 3, volCap: 1.8, volMin: 0.5, zoneRoom: 1, srLow: 30, minQ: 55 },
-    FAST: { req: { t5: 1, t1: 0, cross: 1, srsi: 0, st: 0, zone: 0, vol: 1, chop: 0 }, z5Min: 0.8, z1Min: 0.3, holdMin: 2, crossMin: 0.1, crossWin: 3, maxFlips: 4, volCap: 2.2, volMin: 0.4, zoneRoom: 0.8, srLow: 35, minQ: 0 }
+    SAFE: { req: { t5: 1, t1: 1, cross: 1, srsi: 1, st: 1, zone: 1, vol: 1, chop: 1, x2: 0, zp: 0 }, z5Min: 1.2, z1Min: 0.6, holdMin: 3, crossMin: 0.2, crossWin: 2, maxFlips: 2, volCap: 1.6, volMin: 0.5, zoneRoom: 1, srLow: 30, minQ: 70 },
+    BALANCED: { req: { t5: 1, t1: 1, cross: 1, srsi: 0, st: 0, zone: 1, vol: 1, chop: 1, x2: 0, zp: 0 }, z5Min: 1, z1Min: 0.5, holdMin: 3, crossMin: 0.15, crossWin: 2, maxFlips: 3, volCap: 1.8, volMin: 0.5, zoneRoom: 1, srLow: 30, minQ: 55 },
+    FAST: { req: { t5: 1, t1: 0, cross: 1, srsi: 0, st: 0, zone: 0, vol: 1, chop: 0, x2: 0, zp: 0 }, z5Min: 0.8, z1Min: 0.3, holdMin: 2, crossMin: 0.1, crossWin: 3, maxFlips: 4, volCap: 2.2, volMin: 0.4, zoneRoom: 0.8, srLow: 35, minQ: 0 }
 };
-Object.values(PRESETS).forEach(p => { p.req.xc = 0; p.req.zt = 0; });
-const SIGKEYS = ["xWin", "z5Min", "z1Min", "holdMin", "crossMin", "crossWin", "maxFlips", "volCap", "volMin", "zoneRoom", "srLow", "minQ"];
-const SG = Object.assign({ preset: "BALANCED", ...clone(PRESETS.BALANCED), auto: false, sound: true, trig: "CONF", rev: false, xWin: 12, zMode: "BOTH", cooldown: 10, maxTrades: 0, takeProfit: 20, maxLoss: -20, minPayout: 1.8, maxStakePct: 2, maxStakeAbs: 0 }, ls.get("pw3-sg", {}));
+const SIGKEYS = ["z5Min", "z1Min", "holdMin", "crossMin", "crossWin", "dualWin", "zWin", "maxFlips", "volCap", "volMin", "zoneRoom", "srLow", "minQ"];
+const SG = Object.assign({ preset: "BALANCED", ...clone(PRESETS.BALANCED), auto: false, sound: true, cooldown: 10, maxTrades: 0, takeProfit: 20, maxLoss: -20, minPayout: 1.8, rev: false, trigMode: "ALL", zpMode: "BOTH", dualWin: 10, zWin: 6 }, ls.get("pw3-sg", {}));
 SG.req = Object.assign({}, PRESETS.BALANCED.req, SG.req); SG.auto = false;      // auto always starts OFF
 
 /* ---------- STATE ---------- */
@@ -70,7 +71,7 @@ const S = {
     contract: null, paper: null, subCon: null, unconfirmedUntil: 0,
     rank: [], rankAt: 0, scanning: false, switching: false, want: null, busy: false, cool: 0, lastTick: 0, staleHits: 0,
     stake: Math.max(0.35, Number(ls.get("pw3-stake", 0.35)) || 0.35), dur: Math.min(10, Math.max(5, Number(ls.get("pw3-dur", 5)) || 5)),
-    pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, ratio: 1.9, marks: [], hist: [], res: null, zones: [], zN: 0, sigOk: false, sigCool: 0, execMs: null, specs: {}, barUp: "", barDn: "", barBlock: 0, quoteBlock: 0, badTypeAt: 0, hlLegacy: false, cfFull: undefined, pip: {}, bar: 0, barKey: "", barMap: {}, cs: [], tn: 0, zmem: [], zev: null, amNext: 0, amBusy: false, amOut: 0
+    B: [], bgen: 0, qErr: "", bar: null, barP: null, hlLegacy: false, lastPL: null, multFix: "", pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, ratio: 1.9, marks: [], hist: [], res: null, zones: [], zN: 0, sigOk: false, sigCool: 0, execMs: null
 };
 const V = { tf: "TICK", span: SPAN.TICK, off: 0, ys: 1, cx: null, ema: true, zones: true, sr: true, st: true };   // chart view
 const D = { tool: "cursor", items: ls.get("pw3-draw", {}), tmp: null };                                           // drawings
@@ -84,12 +85,12 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const round2 = v => Math.round(num(v) * 100) / 100;
 const money = v => `${num(v) < 0 ? "-" : ""}$${Math.abs(num(v)).toFixed(2)}`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const dec = () => S.pip?.[S.sym] ?? DEC[S.sym] ?? 2;
+const dec = () => DEC[S.sym] ?? 2;
 const wsOpen = () => Boolean(S.ws && S.ws.readyState === WebSocket.OPEN);
 const ready = () => S.authed && wsOpen();
 const inTrade = () => Boolean(S.contract || S.paper);
 const stake = () => Math.max(0.35, round2(S.stake));
-const dur = () => { const [a, b] = durLimits(O.mode, DM().u); return clamp(Math.floor(num(DM().v, a)), a, b); };
+const dur = () => clamp(Math.floor(S.dur), 5, 10);
 const std = a => {
     if (a.length < 2) return 0;
     const m = a.reduce((s, x) => s + x, 0) / a.length;
@@ -98,6 +99,61 @@ const std = a => {
 const deltas = T => T.slice(1).map((t, i) => t.q - T[i].q);
 const lb = (T, e) => { let a = 0, b = T.length; while (a < b) { const m = (a + b) >> 1; if (T[m].e < e) a = m + 1; else b = m; } return a; };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------- TRADE OPTION: Rise/Fall (Call/Put) · Higher/Lower · Multiplier ---------- */
+const KD = { type: "RF", unit: "t", dv: 5, eq: false, mult: 100, tp: 0, sl: 0, hl: { mode: "manual", barrier: 0.5, target: 1.9 } };
+const K = Object.assign({}, KD, ls.get("pw3-k", {})); K.hl = Object.assign({}, KD.hl, K.hl);
+if (ls.get("pw3-k", null) === null) K.dv = clamp(Math.floor(num(ls.get("pw3-dur", 5), 5)), 1, 10);
+const AS = Object.assign({ cat: "high" }, ls.get("pw3-as", {}), { on: false, t: 0, bad: 0, last: 0, busy: false });   // auto-select market (always starts OFF)
+const CATS = {
+    vhigh: ["VERY HIGH · 75+", s => s >= 75], high: ["HIGH · 56–74", s => s >= 56 && s < 75], med: ["MEDIUM · 50–55", s => s >= 50 && s < 56],
+    low: ["LOW · 25–49", s => s >= 25 && s < 50], vlow: ["VERY LOW · under 25", s => s < 25]
+};
+const inCat = (s, c) => Boolean(CATS[c]?.[1](s));
+const SIDES = { RF: ["RISE", "FALL"], HL: ["HIGHER", "LOWER"], MULT: ["UP", "DOWN"] };
+const KSHORT = { RF: "R/F", HL: "H/L", MULT: "MULT" };
+const sideOf = (type, d) => SIDES[type || K.type][d === "RISE" ? 0 : 1];
+const tickSec = () => (/^1HZ/.test(S.sym || "") ? 1 : 2);
+const DLIM = { t: [1, 10], s: [15, 3599], m: [1, 1439], h: [1, 23] };
+const DPRE = { t: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], s: [15, 30, 45, 60, 90, 120], m: [1, 2, 3, 5, 10, 15, 30, 60], h: [1, 2, 3, 4, 6, 8, 12] };
+const UNAME = { t: "Ticks", s: "Seconds", m: "Minutes", h: "Hours" };
+const durSecs = (k = K) => (k.unit === "t" ? k.dv * tickSec() : k.unit === "s" ? k.dv : k.unit === "m" ? k.dv * 60 : k.dv * 3600);
+const durText = (k = K) => (k.unit === "t" ? `${k.dv} tick${k.dv > 1 ? "s" : ""}` : `${k.dv}${k.unit}`);
+// how many chart steps (ticks or candles) the contract spans: scales the zone-room test to the chart timeframe in use
+const durSteps = () => { const tf = TFS[V.tf]; return K.type === "MULT" ? 10 : Math.max(1, durSecs() / (tf || tickSec())); };
+const kLabel = () => (K.type === "MULT" ? `Multiplier ×${K.mult}` : `${K.type === "HL" ? "Higher/Lower" : K.eq ? "Call/Put (=)" : "Rise/Fall"} · ${durText()}`);
+const optSnap = () => ({ type: K.type, unit: K.unit, dv: K.dv, mult: K.mult, tp: K.tp, sl: K.sl, eq: K.eq });
+const MULTS = { 10: [400, 1000, 2000, 3000, 4000], 25: [160, 400, 800, 1200, 1600], 50: [80, 200, 400, 600, 800], 75: [50, 100, 200, 300, 500], 100: [40, 100, 200, 300, 500] };
+function multList(sym) {
+    const n = Number((/(\d+)/.exec(String(sym || "R_100").replace("1HZ", "")) || [])[1]) || 100;
+    const k = Object.keys(MULTS).map(Number).reduce((a, b) => (Math.abs(b - n) < Math.abs(a - n) ? b : a));
+    return MULTS[k];
+}
+function snapMult() {
+    const L = multList(S.sym); if (L.includes(K.mult)) return;
+    K.mult = L.reduce((a, b) => (Math.abs(b - K.mult) < Math.abs(a - K.mult) ? b : a)); ls.set("pw3-k", K);
+}
+const HLT = () => (S.hlLegacy ? { up: "CALL", dn: "PUT" } : { up: "HIGHER", dn: "LOWER" });
+const barStr = (up, o) => { const v = up ? o : -o; return `${v < 0 ? "-" : "+"}${Math.abs(v).toFixed(dec())}`; };
+const barKey = () => `${S.sym}|${stake()}|${K.unit}${K.dv}|${K.hl.target}|${S.hlLegacy ? "L" : "H"}`;
+const curBar = () => (K.hl.mode === "payout" ? (S.bar && S.bar.key === barKey() ? S.bar.o : null) : num(K.hl.barrier, 0.5));
+// ONE place that builds every proposal, for every contract family
+function quoteReq(side, st, bar) {
+    const up = side === "RISE", r = { proposal: 1, amount: st, basis: "stake", currency: S.cur, underlying_symbol: S.sym };
+    if (K.type === "MULT") {
+        r.contract_type = up ? "MULTUP" : "MULTDOWN"; r.multiplier = K.mult;
+        const lo = {}; if (K.tp > 0) lo.take_profit = K.tp; if (K.sl > 0) lo.stop_loss = K.sl;
+        if (Object.keys(lo).length) r.limit_order = lo;
+    } else {
+        r.duration = K.dv; r.duration_unit = K.unit;
+        if (K.type === "HL") { r.contract_type = up ? HLT().up : HLT().dn; r.barrier = barStr(up, bar ?? curBar() ?? 0.5); }
+        else r.contract_type = RF[side] + (K.eq ? "E" : "");
+    }
+    return r;
+}
+const specKey = () => [S.sym, stake(), S.cur, K.type,
+    K.type === "MULT" ? `${K.mult}|${K.tp}|${K.sl}` : `${K.unit}${K.dv}`,
+    K.type === "HL" ? `${K.hl.mode === "manual" ? "m" + K.hl.barrier : "p" + K.hl.target}${S.hlLegacy ? "L" : ""}` : K.type === "RF" ? `${K.eq ? 1 : 0}${RF.RISE}` : ""].join("|");
 
 function log(msg, lvl = "info") {
     console.log(`[PW ${lvl}]`, msg);
@@ -229,10 +285,10 @@ const buildInd = T => { for (let i = 0; i < T.length; i++) calcInd(T, i); };
    ANALYSIS  (trend · EMA cross · StochRSI · Supertrend · zones · vol · chop)
 ================================================================ */
 // z = net move / (tick-σ · √ticks): how statistically significant the drift is
-function frameStats(T, sec) {
-    if (T.length < 10) return null;
+function frameStats(T, sec, minN = 10) {
+    if (T.length < minN) return null;
     const f = T.slice(lb(T, T[T.length - 1].e - sec));
-    if (f.length < 10) return null;
+    if (f.length < minN) return null;
     const d = deltas(f), s = std(d);
     if (!s) return null;
     const net = f[f.length - 1].q - f[0].q;
@@ -275,7 +331,7 @@ function findZones(T) {
     return [...pick("S"), ...pick("D")];
 }
 function zoneCheck(Z, dir, p, sig) {
-    const need = sig * Math.sqrt(durTicks()) * SG.zoneRoom;
+    const need = sig * Math.sqrt(durSteps()) * SG.zoneRoom;
     const inDem = Z.some(z => z.t === "D" && p >= z.lo && p <= z.hi), inSup = Z.some(z => z.t === "S" && p >= z.lo && p <= z.hi);
     const side = dir > 0 ? "S" : "D";
     if (dir > 0 ? inSup : inDem) return { ok: false, txt: dir > 0 ? "in supply" : "in demand", d: 0 };
@@ -285,86 +341,97 @@ function zoneCheck(Z, dir, p, sig) {
     const bonus = dir > 0 ? inDem : inSup;
     return { ok: true, bonus, txt: bonus ? (dir > 0 ? "in demand ✓" : "in supply ✓") : d === Infinity ? "clear" : `room ${(d / sig).toFixed(0)}σ`, d };
 }
-function dualCross(C, win) {            // price crosses EMA *and* Supertrend the same way within `win` bars
-    const L = C.length - 1; if (L < win + 3) return null;
-    let ce = -1, cd = 0, cs = -1, sd = 0;
-    for (let i = 0; i <= win && i + 1 <= L; i++) {
-        const a = C[L - i], b = C[L - i - 1];
-        if (ce < 0 && (a.q > a.m) !== (b.q > b.m)) { ce = i; cd = a.q > a.m ? 1 : -1; }
-        if (cs < 0 && a.sdir !== b.sdir) { cs = i; sd = a.sdir; }
-    }
-    if (ce < 0 || cs < 0 || cd !== sd) return null;
-    const c = C[L]; if ((c.q > c.m ? 1 : -1) !== cd || c.sdir !== cd) return null;
-    return { dir: cd, age: Math.max(ce, cs) };
-}
-function memZones(zs) {
-    zs.forEach(z => {
-        const k = z.t + z.e0, m = S.zmem.find(x => x.k === k);
-        if (m) { m.hi = z.hi; m.lo = z.lo; m.seen = S.tn; } else S.zmem.push({ k, t: z.t, hi: z.hi, lo: z.lo, seen: S.tn, cool: 0, dead: false });
-    });
-    S.zmem = S.zmem.filter(z => S.tn - z.seen < 400).slice(-16);
-}
-function zoneScan(pq, q) {             // fresh zone events: TOUCH (enter a zone) / BREAK (pierce it)
-    if (!P.zOn || SG.zMode === "OFF" || !S.zmem.length) return;
-    const tch = SG.zMode === "TOUCH" || SG.zMode === "BOTH", brk = SG.zMode === "BREAK" || SG.zMode === "BOTH";
-    for (const z of S.zmem) {
-        if (z.dead || S.tn < z.cool) continue;
-        let ev = null;
-        if (z.t === "D") {
-            if (brk && pq >= z.lo && q < z.lo) ev = { dir: -1, k: "break demand" };
-            else if (tch && pq > z.hi && q <= z.hi) ev = { dir: 1, k: "touch demand" };
+/* Zone play. Breaks: price closes through a zone (directly, or by a retest-bounce of the broken edge).
+   Entries: price drops into a DEMAND zone (→ BUY) / rallies into a SUPPLY zone (→ SELL) the moment it is inside.
+   Returns { 1: "why"|null, -1: "why"|null } (1 = buy side, -1 = sell side). */
+function zonePlay(T, Z, sig) {
+    const out = { 1: null, "-1": null }, n = T.length, W = SG.zWin, md = SG.zpMode; if (n < 50 || !Z.length) return out;
+    const q = i => T[n - 1 - i].q;
+    const crossUp = (lv, w) => { if (q(0) <= lv) return false; for (let i = 0; i < w && i + 1 < n; i++) if (q(i) > lv && q(i + 1) <= lv) return true; return false; };
+    const crossDn = (lv, w) => { if (q(0) >= lv) return false; for (let i = 0; i < w && i + 1 < n; i++) if (q(i) < lv && q(i + 1) >= lv) return true; return false; };
+    const lowest = w => { let m = Infinity; for (let i = 0; i < w; i++) m = Math.min(m, q(i)); return m; };
+    const highest = w => { let m = -Infinity; for (let i = 0; i < w; i++) m = Math.max(m, q(i)); return m; };
+    for (const z of Z) {
+        const inz = q(0) >= z.lo && q(0) <= z.hi;
+        if (z.t === "S") {
+            if (md !== "ENTRY") {                                           // supply broken upward → BUY
+                if (crossUp(z.hi, W)) out[1] = out[1] || "supply break ↑";
+                else if (q(0) > z.hi + 0.1 * sig && q(0) > q(1) && crossUp(z.hi, 40) && lowest(W) <= z.hi + 0.4 * sig) out[1] = out[1] || "supply retest ↑";
+            }
+            if (md !== "BREAK" && inz) { for (let i = 1; i < 5 && i < n; i++) if (q(i) < z.lo) { out[-1] = out[-1] || "into supply ▼"; break; } }
         } else {
-            if (brk && pq <= z.hi && q > z.hi) ev = { dir: 1, k: "break supply" };
-            else if (tch && pq < z.lo && q >= z.lo) ev = { dir: -1, k: "touch supply" };
+            if (md !== "ENTRY") {                                           // demand broken downward → SELL
+                if (crossDn(z.lo, W)) out[-1] = out[-1] || "demand break ↓";
+                else if (q(0) < z.lo - 0.1 * sig && q(0) < q(1) && crossDn(z.lo, 40) && highest(W) >= z.lo - 0.4 * sig) out[-1] = out[-1] || "demand retest ↓";
+            }
+            if (md !== "BREAK" && inz) { for (let i = 1; i < 5 && i < n; i++) if (q(i) > z.hi) { out[1] = out[1] || "into demand ▲"; break; } }
         }
-        if (ev) { S.zev = { dir: ev.dir, k: ev.k, n: S.tn }; z.cool = S.tn + 15; if (ev.k.startsWith("break")) z.dead = true; }
     }
+    return out;
 }
-function analyze(T, Z, C = T, live = true) {
+/* Price crossed the EMA AND the Supertrend line the same way within `win` steps (the ST flips colour when price crosses it) */
+function dualCross(T, dir, win) {
+    const L = T.length - 1; let e = -1, s = -1;
+    for (let i = 0; i < win && i + 1 <= L; i++) {
+        const a = T[L - i], b = T[L - i - 1];
+        if (e < 0 && dir * (a.q - a.m) > 0 && dir * (b.q - b.m) <= 0) e = i;
+        if (s < 0 && a.sdir === dir && b.sdir === -dir) s = i;
+    }
+    return e >= 0 && s >= 0 && T[L].sdir === dir && dir * (T[L].q - T[L].m) > 0 ? { age: Math.max(e, s) } : null;
+}
+/* tfs = seconds per candle of the displayed timeframe (0 = tick chart). Everything below runs on THAT series. */
+function analyze(T, Z, tfs = 0) {
     const n = T.length; if (n < 70) return null;
-    const f5 = frameStats(T, 300), f1 = frameStats(T, 60); if (!f5 || !f1) return null;
+    const mn = tfs ? 6 : 10, f5 = frameStats(T, Math.max(300, 40 * tfs), mn), f1 = frameStats(T, Math.max(60, 10 * tfs), mn); if (!f5 || !f1) return null;
     const Dl = deltas(T.slice(-130)), sig = std(Dl.slice(-60)); if (!sig) return null;
-    const vol = std(Dl.slice(-20)) / (std(Dl) || 1);
-    const cw = C === T || C.length >= 30, L = C.length - 1;               // cw: enough bars on the viewed timeframe
-    const sigC = C === T ? sig : (std(deltas(C.slice(-60))) || sig);
-    const xc = cw ? dualCross(C, SG.xWin) : null;
-    const zev = live && S.zev && S.tn - S.zev.n <= 3 ? S.zev : null;
-    const a5 = f5.z >= 0 ? 1 : -1, dir = SG.trig === "XCROSS" && xc ? xc.dir : a5;
-    const q = i => C[L - i].q, m = i => C[L - i].m, side = i => dir * (q(i) - m(i)), K = i => C[L - i].k, Dd = i => C[L - i].dd;
-    let age = -1;
-    for (let i = 0; i < SG.crossWin && i + 1 <= L; i++) if (side(i) > 0 && side(i + 1) <= 0) { age = i; break; }
-    let hold = 0; if (age >= 0) for (let i = age + 1; i <= age + 12 && i <= L; i++) { if (side(i) <= 0) hold++; else break; }
-    const strength = side(0), slope = dir * (m(0) - m(Math.min(5, L))), crossed = age >= 0 && side(0) > 0;
-    let flips = 0; for (let i = 0; i < 30 && i + 1 <= L; i++) if ((q(i) > m(i)) !== (q(i + 1) > m(i + 1))) flips++;
-    let ext = dir > 0 ? 100 : 0, turn = false;
-    for (let i = 0; i <= 10 && i <= L; i++) ext = dir > 0 ? Math.min(ext, K(i)) : Math.max(ext, K(i));
-    for (let i = 0; i < 4 && i + 1 <= L; i++) if (dir * (K(i) - Dd(i)) > 0 && dir * (K(i + 1) - Dd(i + 1)) <= 0) { turn = true; break; }
-    const inZone = dir > 0 ? ext <= SG.srLow : ext >= 100 - SG.srLow, srOk = cw && turn && inZone;
-    const stOk = cw && C[L].sdir === dir;
-    const zc = P.zOn ? zoneCheck(Z, dir, T[n - 1].q, sig) : { ok: true, txt: "off" };
+    const vol = std(Dl.slice(-20)) / (std(Dl) || 1), trend = f5.z >= 0 ? 1 : -1, L = n - 1;
+    const q = i => T[L - i].q, m = i => T[L - i].m, K_ = i => T[L - i].k, Dd = i => T[L - i].dd;
+    const zpl = P.zOn ? zonePlay(T, Z, sig) : { 1: null, "-1": null };
     const volOk = vol <= SG.volCap && vol >= SG.volMin;
-    const z5 = Math.abs(f5.z), t1ok = Math.sign(f1.z) === dir, xOk = Boolean(xc && xc.dir === dir), zOk = Boolean(zev && zev.dir === dir);
-    const rows = [
-        { id: "t5", pass: a5 === dir && z5 >= SG.z5Min, val: `${f5.z >= 0 ? "▲" : "▼"} z ${f5.z.toFixed(2)}`, w: 0.22, c: a5 === dir ? Math.min(z5 / 2.5, 1) : 0 },
-        { id: "t1", pass: t1ok && Math.abs(f1.z) >= SG.z1Min, val: `z ${f1.z.toFixed(2)}`, w: 0.12, c: t1ok ? Math.min(Math.abs(f1.z) / 1.5, 1) : 0 },
-        {
-            id: "cross", pass: cw && crossed && hold >= SG.holdMin && strength >= SG.crossMin * sigC && slope >= 0,
-            val: crossed ? `${age}b ago · ${hold}b ${dir > 0 ? "below" : "above"}` : side(0) > 0 ? "riding EMA" : "pullback", w: 0.18,
-            c: crossed ? Math.min(1, 0.6 + strength / (sigC * 0.8) * 0.4) : side(0) > 0 ? 0.45 : side(0) > -3 * sigC ? 0.55 : 0.2
-        },
-        { id: "srsi", off: !P.srOn, pass: !P.srOn || srOk, val: P.srOn ? `K ${K(0).toFixed(0)}` : "off", w: 0.12, c: srOk ? 1 : inZone ? 0.55 : 0.25 },
-        { id: "st", off: !P.stOn, pass: !P.stOn || stOk, val: P.stOn ? (C[L].sdir > 0 ? "▲ up" : "▼ down") : "off", w: 0.08, c: stOk ? 1 : 0 },
-        { id: "xc", off: !(SG.req.xc || SG.trig === "XCROSS"), pass: xOk, val: xc ? `${xc.dir > 0 ? "▲" : "▼"} ${xc.age}b ago` : "none", w: 0.12, c: xOk ? 1 : 0 },
-        { id: "zone", off: !P.zOn, pass: zc.ok, val: zc.txt, w: 0.12, c: zc.ok ? (zc.bonus ? 1 : 0.7) : 0 },
-        { id: "zt", off: !P.zOn || !(SG.req.zt || SG.trig === "ZONE"), pass: zOk, val: zev ? zev.k : "none", w: 0.12, c: zOk ? 1 : 0 },
-        { id: "vol", pass: volOk, val: vol.toFixed(2), w: 0.08, c: volOk ? (vol >= 0.7 && vol <= 1.4 ? 1 : 0.6) : 0 },
-        { id: "chop", pass: flips <= SG.maxFlips, val: `${flips} flips`, w: 0.08, c: flips <= 1 ? 1 : flips <= SG.maxFlips ? 0.6 : 0 }
-    ];
-    let sw = 0, sc = 0; rows.forEach(r => { if (!r.off) { sw += r.w; sc += r.w * r.c; } });
-    const score = Math.round(100 * sc / (sw || 1)), act = rows.filter(r => !r.off);
-    const need = r => SG.req[r.id] || (r.id === "xc" && SG.trig === "XCROSS") || (r.id === "zt" && SG.trig === "ZONE");
-    const ok = !(SG.trig === "ZONE" && !P.zOn) && act.every(r => !need(r) || r.pass) && score >= SG.minQ;
-    return { dir, f5, f1, sig, vol, rows, score, ok, passed: act.filter(r => r.pass).length, total: act.length, crossed, flips, k: K(0), dd: Dd(0), sdir: C[L].sdir, zoneTxt: zc.txt, zoneOk: zc.ok, xc, zev };
+    let flips = 0; for (let i = 0; i < 30 && i + 1 <= L; i++) if ((q(i) > m(i)) !== (q(i + 1) > m(i + 1))) flips++;
+    const evalDir = dir => {
+        const side = i => dir * (q(i) - m(i));
+        let age = -1;                                                         // EMA cross in this direction within the last crossWin steps
+        for (let i = 0; i < SG.crossWin && i + 1 <= L; i++) if (side(i) > 0 && side(i + 1) <= 0) { age = i; break; }
+        let hold = 0; if (age >= 0) for (let i = age + 1; i <= age + 12 && i <= L; i++) { if (side(i) <= 0) hold++; else break; }
+        const strength = side(0), slope = dir * (m(0) - m(Math.min(5, L))), crossed = age >= 0 && side(0) > 0;
+        let ext = dir > 0 ? 100 : 0, turn = false;                            // Stochastic RSI turn after a pullback into the low/high band
+        for (let i = 0; i <= 10 && i <= L; i++) ext = dir > 0 ? Math.min(ext, K_(i)) : Math.max(ext, K_(i));
+        for (let i = 0; i < 4 && i + 1 <= L; i++) if (dir * (K_(i) - Dd(i)) > 0 && dir * (K_(i + 1) - Dd(i + 1)) <= 0) { turn = true; break; }
+        const inZone = dir > 0 ? ext <= SG.srLow : ext >= 100 - SG.srLow, srOk = turn && inZone;
+        const stOk = T[L].sdir === dir;
+        const zc = P.zOn ? zoneCheck(Z, dir, q(0), sig) : { ok: true, txt: "off" };
+        const z5 = Math.abs(f5.z), t5ok = Math.sign(f5.z) === dir, t1ok = Math.sign(f1.z) === dir;
+        const dc = dualCross(T, dir, SG.dualWin), zv = zpl[dir];
+        const rows = [
+            { id: "t5", pass: t5ok && z5 >= SG.z5Min, val: `${f5.z >= 0 ? "▲" : "▼"} z ${f5.z.toFixed(2)}`, w: 0.2, c: t5ok ? Math.min(z5 / 2.5, 1) : 0 },
+            { id: "t1", pass: t1ok && Math.abs(f1.z) >= SG.z1Min, val: `z ${f1.z.toFixed(2)}`, w: 0.1, c: t1ok ? Math.min(Math.abs(f1.z) / 1.5, 1) : 0 },
+            {
+                id: "cross", pass: crossed && hold >= SG.holdMin && strength >= SG.crossMin * sig && slope >= 0,
+                val: crossed ? `${age}t ago · ${hold}t ${dir > 0 ? "below" : "above"}` : side(0) > 0 ? "riding EMA" : "pullback", w: 0.16,
+                c: crossed ? Math.min(1, 0.6 + strength / (sig * 0.8) * 0.4) : side(0) > 0 ? 0.45 : side(0) > -3 * sig ? 0.55 : 0.2
+            },
+            { id: "x2", off: !SG.req.x2, pass: Boolean(dc), val: dc ? `${dc.age} ago` : stOk ? "ST agrees" : "no cross", w: 0.14, c: dc ? 1 : stOk ? 0.4 : 0.1 },
+            { id: "zp", off: !SG.req.zp || !P.zOn, pass: Boolean(zv), val: zv || "—", w: 0.14, c: zv ? 1 : 0.2 },
+            { id: "srsi", off: !P.srOn, pass: !P.srOn || srOk, val: P.srOn ? `K ${K_(0).toFixed(0)}` : "off", w: 0.12, c: srOk ? 1 : inZone ? 0.55 : 0.25 },
+            { id: "st", off: !P.stOn, pass: !P.stOn || stOk, val: P.stOn ? (T[L].sdir > 0 ? "▲ up" : "▼ down") : "off", w: 0.08, c: stOk ? 1 : 0 },
+            { id: "zone", off: !P.zOn, pass: zc.ok, val: zc.txt, w: 0.1, c: zc.ok ? (zc.bonus ? 1 : 0.7) : 0 },
+            { id: "vol", pass: volOk, val: vol.toFixed(2), w: 0.08, c: volOk ? (vol >= 0.7 && vol <= 1.4 ? 1 : 0.6) : 0 },
+            { id: "chop", pass: flips <= SG.maxFlips, val: `${flips} flips`, w: 0.08, c: flips <= 1 ? 1 : flips <= SG.maxFlips ? 0.6 : 0 }
+        ];
+        let sw = 0, sc = 0; rows.forEach(r => { if (!r.off) { sw += r.w; sc += r.w * r.c; } });
+        const score = Math.round(100 * sc / (sw || 1)), act = rows.filter(r => !r.off);
+        const tr = rows.filter(r => TRIGS.includes(r.id) && SG.req[r.id]);     // triggers = the entry EVENTS you ticked
+        const trigOk = !tr.length || (SG.trigMode === "ANY" ? tr.some(r => r.pass) : tr.every(r => r.pass));
+        const confOk = rows.every(r => TRIGS.includes(r.id) || r.off || !SG.req[r.id] || r.pass);
+        const ok = trigOk && confOk && score >= SG.minQ;
+        return {
+            dir, f5, f1, sig, vol, rows, score, ok, passed: act.filter(r => r.pass).length, total: act.length, crossed, flips, k: K_(0), dd: Dd(0), sdir: T[L].sdir,
+            zoneTxt: zc.txt, zoneOk: zc.ok, trig: rows.filter(r => TRIGS.includes(r.id) && !r.off && r.pass).map(r => r.id)
+        };
+    };
+    const a = evalDir(trend), b = evalDir(-trend);
+    return a.ok ? a : b.ok ? b : a;       // an event in either direction can fire; otherwise show the trend side
 }
 
 /* ================================================================
@@ -413,6 +480,48 @@ async function fetchHistory(sym, tries = 3, count = 600) {
         } catch (e) { if (i === tries - 1 || !wsOpen()) throw e; await sleep(400 * (i + 1)); }
     }
 }
+/* ---------- chart series: ticks, or candles of the displayed timeframe (signals run on whichever is displayed) ---------- */
+const series = () => (TFS[V.tf] ? S.B : S.ticks);
+function barsFromTicks(T, tf) {
+    const out = []; let cur = null;
+    for (const t of T) {
+        const b = Math.floor(t.e / tf) * tf;
+        if (!cur || cur.e !== b) { if (cur) out.push(cur); cur = { e: b, o: t.q, h: t.q, l: t.q, c: t.q, q: t.q }; }
+        else { if (t.q > cur.h) cur.h = t.q; if (t.q < cur.l) cur.l = t.q; cur.c = cur.q = t.q; }
+    }
+    if (cur) out.push(cur);
+    return out;
+}
+async function prepBars() {
+    const tf = TFS[V.tf], g = ++S.bgen, sym = S.sym;
+    if (!tf) { S.B = []; return; }
+    if (tf >= 60 && sym && wsOpen()) {                                       // Deriv serves 1m / 5m candles natively: deep history
+        try {
+            const r = await sendWS({ ticks_history: sym, end: "latest", count: 900, style: "candles", granularity: tf }, { timeout: 12000, type: `candles ${sym}` });
+            if (g !== S.bgen || sym !== S.sym) return;
+            const B = (r.candles || []).map(c => ({ e: Number(c.epoch), o: Number(c.open), h: Number(c.high), l: Number(c.low), c: Number(c.close), q: Number(c.close) })).filter(b => Number.isFinite(b.q) && Number.isFinite(b.e));
+            if (B.length > 80) { buildInd(B); S.B = B; return; }
+        } catch (e) { log(`Candle history failed → ${e.message} (building from ticks)`, "warn"); }
+    }
+    if (g !== S.bgen) return;
+    S.B = barsFromTicks(S.ticks, tf); buildInd(S.B);
+}
+function updateBars(q, e) {
+    const tf = TFS[V.tf], B = S.B; if (!tf || !B.length) return;
+    const b = Math.floor(e / tf) * tf, last = B[B.length - 1];
+    if (last.e === b) { if (q > last.h) last.h = q; if (q < last.l) last.l = q; last.c = last.q = q; calcInd(B, B.length - 1); }
+    else if (b > last.e) { B.push({ e: b, o: q, h: q, l: q, c: q, q }); calcInd(B, B.length - 1); if (B.length > MAX_BARS) B.shift(); }
+}
+const analyzeNow = () => { const A = series(); return A.length >= 70 ? analyze(A.length > 900 ? A.slice(-900) : A, S.zones, TFS[V.tf]) : null; };
+async function setTF(tf) {
+    V.tf = tf; V.span = SPAN[tf]; V.off = 0; V.ys = 1;
+    document.querySelectorAll("#tfBtns [data-tf]").forEach(x => x.classList.toggle("on", x.dataset.tf === tf));
+    set("tfNote", tf === "TICK" ? "signals: ticks" : `signals: ${tf} candles`);
+    S.B = []; redraw();
+    await prepBars();
+    S.zones = P.zOn ? findZones(series()) : []; S.zN = 0; reeval();
+}
+
 /* Serialised market switching: ONE switch at a time, latest request wins — chart, ranking and reconnects never clash */
 async function useMarket(sym, force = false) {
     if (!sym || !ready() || inTrade() || S.busy) return false;
@@ -426,22 +535,23 @@ async function useMarket(sym, force = false) {
 async function loadMarket(sym, force) {
     if (!force && sym === S.sym && S.subTick) return true;
     const g = ++S.gen; S.lastTick = Date.now();
-    S.quoteBlock = 0; await disarm(); await dropTick();
+    await disarm(); await dropTick();
     let T = [];
     try { T = await fetchHistory(sym, 3, 5000); } catch (e) { log(`History ${sym} failed → ${e.message}`, "warn"); }
     if (g !== S.gen) return false;
     buildInd(T);
-    S.ticks = T; S.sym = sym; S.marks = []; S.res = null; S.zN = 0; S.sigOk = false; D.tmp = null; V.off = 0;
-    S.zones = P.zOn ? findZones(T) : [];
-    S.zmem = []; S.zev = null; rebuildCS(); memZones(S.zones); S.res = analyze(T, S.zones, TFS[V.tf] ? S.cs : undefined);
+    S.ticks = T; S.sym = sym; S.marks = []; S.res = null; S.zN = 0; S.sigOk = false; D.tmp = null; V.off = 0; S.bar = null; S.qErr = "";
+    if (TFS[V.tf]) { await prepBars(); if (g !== S.gen) return false; }
+    S.zones = P.zOn ? findZones(series()) : [];
+    S.res = analyzeNow();
     ls.set("pw3-sym", sym);
     set("symName", `${sym} · ${NAMES[sym]}`);
+    if (K.type === "MULT") { snapMult(); renderDock(); }
     try {
         const r = await sendWS({ ticks: sym, subscribe: 1 }, { timeout: 7000, type: `ticks ${sym}` });
         const id = r?.subscription?.id || null;
         if (g !== S.gen) { await forget(id); return false; }
         S.subTick = id; log(`Streaming ${sym} (${T.length} ticks loaded)`);
-        loadSpecs(sym).then(() => { if (S.sym === sym) { renderOpt(); armSoon(); } }).catch(() => { });
         renderRank(); renderHud(); redraw();
         return true;
     } catch (e) { log(`Tick subscription failed → ${e.message}`, "error"); return false; }
@@ -450,16 +560,15 @@ function onTick(m) {
     const t = m.tick;
     if (!t || t.symbol !== S.sym) return;
     const q = Number(t.quote), e = Number(t.epoch);
-    if (t.pip_size != null) { const pz = Number(t.pip_size); if (Number.isFinite(pz) && pz > 0) S.pip[t.symbol] = pz >= 1 ? Math.round(pz) : Math.round(-Math.log10(pz)); }
     if (!Number.isFinite(q) || !Number.isFinite(e)) return;
     const T = S.ticks, last = T[T.length - 1];
     if (last && e <= last.e) return;
-    const pq = last ? last.q : q; T.push({ q, e }); calcInd(T, T.length - 1); S.tn++; updateCS(T[T.length - 1]);
+    T.push({ q, e }); calcInd(T, T.length - 1);
     if (T.length > MAX_TICKS) T.shift();
+    updateBars(q, e);
     S.lastTick = Date.now(); S.staleHits = 0;
-    if (P.zOn && ++S.zN % 5 === 1) { S.zones = findZones(T); memZones(S.zones); }
-    zoneScan(pq, q);
-    S.res = analyze(T.length > 900 ? T.slice(-900) : T, S.zones, TFS[V.tf] ? S.cs : undefined);
+    if (P.zOn && ++S.zN % 5 === 1) S.zones = findZones(series());
+    S.res = analyzeNow();
     if (S.paper) paperTick(q, e);
     checkSignal(S.res);
     renderHud(); redraw();
@@ -477,7 +586,7 @@ async function scan(reason = "manual") {
                 const s = SYMS[i++];
                 try {
                     const T = await fetchHistory(s, 2, 600); buildInd(T);
-                    const a = analyze(T, P.zOn ? findZones(T) : [], undefined, false);
+                    const a = analyze(T, P.zOn ? findZones(T) : []);
                     if (a) out.push({ sym: s, bias: a.dir > 0 ? "RISE" : "FALL", z5: a.f5.z, z1: a.f1.z, vol: a.vol, flips: a.flips, sdir: a.sdir, k: a.k, zone: a.zoneTxt, zoneOk: a.zoneOk, score: a.score, sigma: a.sig });
                 } catch (e) { log(`${s} history failed → ${e.message}`, "warn"); }
             }
@@ -542,98 +651,136 @@ function fixRF() {
     S.rfFixed = true; RF = { RISE: RF.FALL, FALL: RF.RISE };
     log(`Rise/Fall mapping corrected → RISE=${RF.RISE}, FALL=${RF.FALL}`, "warn"); armSoon();
 }
+function qErr(msg) { if (S.qErr !== msg) { S.qErr = msg; manualUI(); } }
 function onProposal(m) {
     const p = m.proposal, pt = m.echo_req?.passthrough;
     if (!p || !pt || pt.g !== S.pgen) return;
     const side = pt.side;
     if (side !== "RISE" && side !== "FALL") return;
-    if ((O.mode === "RF" || O.mode === "HL") && sideMatches(p.longcode, side) === false) { if (O.mode === "RF") fixRF(); return; }
+    if (K.type !== "MULT") {
+        const sm = sideMatches(p.longcode, side);
+        if (sm === false) { if (K.type === "RF") return void fixRF(); return void qErr("Quote side mismatch — not trading it"); }
+    }
     const ask = Number(p.ask_price), payout = Number(p.payout);
-    if (!p.id || !(ask > 0) || ((O.mode === "RF" || O.mode === "HL") && !(payout > 0))) return;
-    S.pp[side] = { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : NaN, at: Date.now(), stake: num(m.echo_req.amount), dir: side };
-    manualUI();
+    if (!p.id || !(ask > 0)) return;
+    if (K.type !== "MULT" && !(payout > 0)) return;                    // multipliers have no fixed payout
+    S.pp[side] = { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : 0, at: Date.now(), stake: num(m.echo_req.amount), dir: side, key: S.armKey };
+    S.armFails = 0; S.qErr = ""; manualUI();
 }
-const fresh = (dir, st) => { const p = S.pp[dir]; return p && Math.abs(p.stake - st) < 0.001 && Date.now() - p.at < QUOTE_TTL ? p : null; };
+const fresh = (dir, st) => { const p = S.pp[dir]; return p && p.key === S.armKey && p.key === specKey() && Math.abs(p.stake - st) < 0.001 && Date.now() - p.at < (K.type === "MULT" ? 20000 : QUOTE_TTL) ? p : null; };
 function armSoon(ms = 120) { clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armLock = S.armLock.then(syncArm).catch(() => { }); }, ms); }
 async function disarm() {
     S.pgen++; const subs = Object.values(S.ppSub);
     S.ppSub = {}; S.pp = { RISE: null, FALL: null }; S.armKey = "";
     await Promise.all(subs.map(forget));
 }
-async function syncArm() {
-    const can = () => ready() && S.sym && S.subTick && !inTrade() && !S.busy && !S.switching;
-    if (!can()) { if (S.armKey || Object.keys(S.ppSub).length) await disarm(); manualUI(); return; }
-    const st = stake();
-    if (Date.now() < S.quoteBlock) return;
-    if (O.mode === "MU") fixMult();
-    if (O.mode === "HL") {
-        if (Date.now() < S.barBlock) return; try { await ensureBar(st); S.armFails = 0; }
-        catch (e) { S.barBlock = Date.now() + 15000; if (S.armFails++ < 3) { log(`Barrier solve failed → ${e.message}`, "warn"); toast(`Barrier: ${e.message}`, 3000, "bad"); } manualUI(); return; }
-        if (!can()) return;
+// quotes stay armed DURING a trade too, so the next entry after settlement is already one BUY round-trip away
+const canArm = () => ready() && S.sym && S.subTick && !S.switching && !(S.busy && !inTrade());
+
+/* Higher/Lower barrier from a TARGET PAYOUT: parallel probes bracket the payout curve, then a fine round interpolates it.
+   Barrier distance is in price points (relative barrier), mirrored for the LOWER side. */
+async function solveBar(st) {
+    const sg = std(deltas(S.ticks.slice(-300))) || 0.5, steps = Math.max(1, durSecs() / tickSec()), base = sg * Math.sqrt(steps), T = K.hl.target;
+    const rnd = v => +v.toFixed(Math.min(dec(), 4)); let firstErr = "";
+    const run = async ms => (await Promise.all(ms.map(async mm => {
+        const o = rnd(mm * base);
+        try { const r = await sendWS(quoteReq("RISE", st, o), { timeout: 6000, type: "probe" }), a = Number(r.proposal?.ask_price), pay = Number(r.proposal?.payout); return a > 0 && pay > 0 ? { o, ratio: pay / a } : null; }
+        catch (e) { firstErr = firstErr || e.message; return null; }
+    }))).filter(Boolean).sort((a, b) => a.o - b.o);
+    const interp = pts => {
+        if (!pts.length) return null;
+        if (T <= pts[0].ratio) return pts[0].o; if (T >= pts[pts.length - 1].ratio) return pts[pts.length - 1].o;
+        for (let i = 1; i < pts.length; i++) if (T <= pts[i].ratio) { const a = pts[i - 1], b = pts[i], f = b.ratio === a.ratio ? 0 : (T - a.ratio) / (b.ratio - a.ratio); return a.o + f * (b.o - a.o); }
+        return null;
+    };
+    const p1 = await run([-1.2, -0.5, -0.15, 0.15, 0.5, 1, 1.8, 3.2]);
+    let o = interp(p1); if (o === null) throw new Error(firstErr || "no barrier quotes");
+    const m1 = o / base, spread = Math.max(0.3, Math.abs(m1)), p2 = await run([-0.12, -0.06, 0.06, 0.12].map(k => m1 + k * spread));
+    const o2 = interp([...p1, ...p2].sort((a, b) => a.o - b.o)); if (o2 !== null) o = o2;
+    o = rnd(o); log(`Barrier for ${T.toFixed(2)}× payout on ${S.sym} → ${barStr(true, o)} / ${barStr(false, o)}`, "info");
+    return o;
+}
+function ensureBar(st) {
+    const key = barKey();
+    if (S.bar && S.bar.key === key && Date.now() - S.bar.at < 120000) return Promise.resolve(S.bar.o);
+    if (S.barP && S.barP.key === key) return S.barP.p;
+    const p = solveBar(st).then(o => { S.bar = { key, o, at: Date.now() }; manualUI(); return o; }).finally(() => { if (S.barP && S.barP.key === key) S.barP = null; });
+    S.barP = { key, p }; return p;
+}
+function quoteError(e) {
+    const msg = String(e.message || "");
+    if (K.type === "HL" && !S.hlLegacy && /contract.?type|not offered|invalid.*(type|contract)/i.test(msg)) { S.hlLegacy = true; S.bar = null; log("Higher/Lower via CALL/PUT + barrier (compat mode).", "warn"); return armSoon(60); }
+    if (K.type === "MULT" && /multiplier/i.test(msg) && S.multFix !== msg) {          // Deriv lists the accepted multipliers in its error → snap to the nearest
+        const nums = (msg.match(/\d{2,5}/g) || []).map(Number).filter(v => v !== K.mult);
+        if (nums.length >= 2) { S.multFix = msg; K.mult = nums.reduce((a, b) => (Math.abs(b - K.mult) < Math.abs(a - K.mult) ? b : a)); ls.set("pw3-k", K); log(`Multiplier adjusted → ×${K.mult}`, "warn"); renderDock(); armSoon(60); }
     }
-    const key = qKey(st);
+}
+async function syncArm() {
+    if (!canArm()) { if (S.armKey || Object.keys(S.ppSub).length) await disarm(); manualUI(); return; }
+    const st = stake(), key = specKey();
     if (key === S.armKey) return;
     await disarm();
-    S.armKey = key; const g = ++S.pgen;
+    S.armKey = key; const g = ++S.pgen; let bar;
+    if (K.type === "HL" && K.hl.mode === "payout") {
+        manualUI();
+        try { bar = await ensureBar(st); } catch (e) { if (g === S.pgen) { S.armKey = ""; qErr(`Barrier: ${e.message}`); if (S.armFails++ < 3) log(`Barrier solve failed → ${e.message}`, "warn"); quoteError(e); } return; }
+        if (g !== S.pgen) return;
+    }
     await Promise.all(["RISE", "FALL"].map(async side => {
-        let rq = null;
         try {
-            const r = await sendWS(Object.assign(rq = propReq(side, st), { subscribe: 1, passthrough: { side, g } }), { timeout: 7000, type: "quote" });
+            const r = await sendWS({ ...quoteReq(side, st, bar), subscribe: 1, passthrough: { side, g } }, { timeout: 7000, type: "quote" });
             const id = r.subscription?.id || null;
             if (g !== S.pgen) return void (await forget(id));
-            S.ppSub[side] = id; S.armFails = 0;
+            S.ppSub[side] = id;
         } catch (e) {
-            if (g === S.pgen) quoteFail(side, e, rq);
+            if (g === S.pgen) { S.armKey = ""; qErr(e.message); if (S.armFails++ < 3) log(`Quote ${side} unavailable → ${e.message}`, "warn"); quoteError(e); }
         }
     }));
     manualUI();
 }
 async function oneShot(dir, st, retry = true) {          // fallback: single quote when no fresh pre-armed one exists
-    if (O.mode === "HL") await ensureBar(st);
-    const r = await sendWS(Object.assign(propReq(dir, st), { subscribe: 1, passthrough: { side: dir, g: -1 } }), { timeout: 5000, type: "quote" });   // new API: only streaming proposal ids can be bought
-    if (r.subscription?.id) setTimeout(() => forget(r.subscription.id), 8000);
+    let bar; if (K.type === "HL" && K.hl.mode === "payout") bar = await ensureBar(st);
+    const r = await sendWS(quoteReq(dir, st, bar), { timeout: 5000, type: "quote" });
     const p = r.proposal;
     if (!p?.id) throw new Error("Proposal ID missing.");
-    const rfhl = O.mode === "RF" || O.mode === "HL";
-    if (rfhl && sideMatches(p.longcode, dir) === false) {              // safety: never trade the opposite side
-        if (!retry || O.mode !== "RF") throw new Error("Contract side does not match the signal.");
+    if (K.type !== "MULT" && sideMatches(p.longcode, dir) === false) {     // safety: never trade the opposite side
+        if (!retry || K.type !== "RF") throw new Error("Contract side does not match the signal.");
         S.rfFixed = true; RF = { RISE: RF.FALL, FALL: RF.RISE };
         log(`Rise/Fall mapping corrected → RISE=${RF.RISE}, FALL=${RF.FALL}`, "warn");
         return oneShot(dir, st, false);
     }
     const ask = Number(p.ask_price), payout = Number(p.payout);
-    if (!(ask > 0) || (rfhl && !(payout > 0))) throw new Error("Invalid proposal price.");
-    return { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : NaN, at: Date.now(), stake: st, dir };
+    if (!(ask > 0)) throw new Error("Invalid proposal price.");
+    if (K.type !== "MULT" && !(payout > 0)) throw new Error("Invalid proposal payout.");
+    return { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : 0, at: Date.now(), stake: st, dir };
 }
 
 /* ================================================================
-   EXECUTION  (manual click and auto entry share ONE gate)
+   EXECUTION  (manual click and auto entry share ONE gate; same path for every contract family)
 ================================================================ */
 async function execute(dir, src, res) {
     if (S.busy || inTrade() || S.switching || !ready() || !S.sym) return false;
     S.busy = true;
-    const t0 = performance.now(), st = stake(), last = S.ticks[S.ticks.length - 1];
+    const t0 = performance.now(), st = stake(), last = S.ticks[S.ticks.length - 1], opt = optSnap();
     manualUI();
-    log(src === "auto" ? `AUTO ${dir} · ${S.sym} · Q ${res.score} · 5m z ${res.f5.z.toFixed(2)} · 1m z ${res.f1.z.toFixed(2)}` : `MANUAL ${dir} · ${S.sym}`, "trade");
+    log(src === "auto" ? `AUTO ${sideOf(opt.type, dir)} · ${kLabel()} · ${S.sym} · Q ${res.score}${SG.rev ? " · REVERSED" : ""}` : `MANUAL ${sideOf(opt.type, dir)} · ${kLabel()} · ${S.sym}`, "trade");
     try {
-        if (S.exec === "LIVE" && st > riskCap() + 0.001) throw new Error(`Stake ${money(st)} is above your risk cap ${money(riskCap())} (Signals → Max stake). Lower the stake or raise the cap.`);
-        if (S.exec === "PAPER" && O.mode === "VN") throw new Error("Vanillas cannot be paper-simulated — use LIVE on a demo account.");
+        if (st > S.bal * 0.95 && S.exec === "LIVE") throw new Error("Stake exceeds balance protection.");
         const p = fresh(dir, st) || await oneShot(dir, st);
-        if (S.exec === "LIVE" && p.ask > riskCap() * 1.05 + 0.01) throw new Error(`Buy price ${money(p.ask)} (stake + commission) exceeds your risk cap ${money(riskCap())}.`);
-        if (src === "auto" && minPayFail(p)) {
+        S.pp[dir] = null;                                  // that quote id is consumed — the stream refills it within a second
+        if (src === "auto" && opt.type !== "MULT" && p.ratio < SG.minPayout - 0.005) {
             log(`Payout ${p.ratio.toFixed(2)}x below minimum — skipped.`, "warn");
             S.busy = false; S.cool = Date.now() + 3000; manualUI(); return false;
         }
         if (last) S.marks.push({ k: "buy", e: last.e, q: last.q, dir });
-        if (S.exec === "PAPER") { startPaper(dir, p, src); disarm(); }
+        if (S.exec === "PAPER") startPaper(dir, p, src, opt);
         else {
-            try { await buy(p, src); }
+            try { await buy(p, src, opt); }
             catch (e) {
                 if (S.unconfirmedUntil || /timed out|closed|unavailable/i.test(e.message)) throw e;
                 log("Quote moved — retrying once on a fresh quote.", "warn");
-                await buy(await oneShot(dir, st), src);
+                await buy(await oneShot(dir, st), src, opt);
             }
-            disarm();
         }
         S.execMs = Math.round(performance.now() - t0); log(`Executed in ${S.execMs} ms`); ui();
         return true;
@@ -644,8 +791,8 @@ async function execute(dir, src, res) {
         return false;
     }
 }
-async function buy(p, src) {
-    log(`BUY ${p.dir} · ${S.sym} · ${money(p.ask)}`, "trade");
+async function buy(p, src, opt) {
+    log(`BUY ${sideOf(opt.type, p.dir)} · ${S.sym} · ${money(p.ask)}`, "trade");
     let r;
     try { r = await sendWS({ buy: p.id, price: Math.ceil(p.ask * (1 + SLIP) * 100) / 100, subscribe: 1 }, { timeout: 7000, type: "buy" }); }
     catch (e) {
@@ -654,9 +801,13 @@ async function buy(p, src) {
     }
     const id = Number(r.buy?.contract_id);
     if (!Number.isInteger(id) || id <= 0) throw new Error(`Invalid contract_id: ${r.buy?.contract_id}`);
-    S.contract = { id, dir: p.dir, src, stake: num(r.buy.buy_price, p.ask), payout: num(r.buy.payout, p.payout), entry: NaN, ee: NaN, profit: 0, ticks: 0, status: "open", done: false, mode: O.mode, tk: O.mode !== "MU" && DM().u === "t" ? dur() : 0, secs: durSec(), mult: O.mult, ds: NaN, de: NaN, closing: false };
+    const t0 = num(r.buy.start_time) * 1000 || Date.now(), secs = opt.type === "MULT" ? 0 : durSecs(opt);
+    S.contract = {
+        id, dir: p.dir, opt, src, stake: num(r.buy.buy_price, p.ask), payout: num(r.buy.payout, p.payout), entry: NaN, ee: NaN, profit: 0, ticks: 0, status: "open", done: false,
+        tstart: t0, secs, exp: secs ? t0 + secs * 1000 : NaN, sym: S.sym
+    };
     S.subCon = r.subscription?.id || null;        // contract stream requested inside the BUY itself
-    if (S.contract.payout > 0) S.ratio = S.contract.payout / S.contract.stake; S.trades++;
+    S.ratio = S.contract.payout > 0 ? S.contract.payout / S.contract.stake : 0; S.trades++;
     log(`BUY ACCEPTED → contract ${id}`, "trade");
     contractUI(); ui();
 }
@@ -671,9 +822,10 @@ function onContract(m) {
     if (!k || !c || Number(k.contract_id) !== c.id) return;
     const f = (v, d) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? d : Number(v));
     c.entry = f(k.entry_spot, c.entry); c.ee = f(k.entry_tick_time, c.ee); c.payout = f(k.payout, c.payout); c.stake = f(k.buy_price, c.stake);
-    c.profit = f(k.profit, c.profit); c.status = k.status || c.status;
+    c.profit = f(k.profit, c.profit); c.status = k.status || c.status; c.bid = f(k.bid_price, c.bid);
+    if (k.date_expiry) c.exp = Number(k.date_expiry) * 1000;
+    if (k.date_start) c.tstart = Number(k.date_start) * 1000;
     c.ticks = Array.isArray(k.tick_stream) ? k.tick_stream.length : f(k.tick_count, c.ticks);
-    c.ds = f(k.date_start, c.ds); c.de = f(k.date_expiry, c.de);
     contractUI(); redraw();
     const fin = Number(k.is_expired) === 1 || Number(k.is_sold) === 1 || ["won", "lost", "sold", "cancelled"].includes(String(k.status || "").toLowerCase());
     if (fin && !c.done) {
@@ -683,65 +835,78 @@ function onContract(m) {
         finish(profit, `CONTRACT ${c.id}`, c);
     }
 }
-function startPaper(dir, p, src) {
-    S.paper = { dir, src, stake: p.ask, payout: p.payout, entry: null, ee: NaN, n: 0, pl: 0, mode: O.mode, secs: durSec(), tk: O.mode !== "MU" && DM().u === "t" ? dur() : 0, bar: Math.abs(parseFloat(dir === "RISE" ? S.barUp : S.barDn)) || S.bar, mult: O.mult, tp: O.tp, sl: O.sl };
-    if (p.payout > 0) S.ratio = p.payout / p.ask; S.trades++;
-    log(`PAPER ${dir} · ${O.mode} · stake ${money(p.ask)}${p.payout > 0 ? ` · payout ${money(p.payout)}` : ` · ×${O.mult}`}`, "trade");
+/* close an open multiplier early (live: SELL at market · paper: settle at the current price) */
+async function closeTrade() {
+    const c = S.contract, p = S.paper;
+    if (p) { if (p.opt.type === "MULT" && p.entry !== null) paperEnd(p.profit, "PAPER CLOSE"); return; }
+    if (!c || c.closing || c.done) return;
+    c.closing = true; $("tcClose").disabled = true;
+    try {
+        const r = await sendWS({ sell: c.id, price: 0 }, { timeout: 6000, type: "sell" });
+        const sf = num(r.sell?.sold_for, NaN); log(`SELL requested → ${money(sf)}`, "trade");
+        setTimeout(() => {                                   // normally the contract stream reports is_sold first; this is the safety net
+            if (S.contract === c && !c.done) {
+                c.done = true; const sub = S.subCon; S.subCon = null; S.contract = null; forget(sub);
+                finish(Number.isFinite(sf) ? sf - c.stake : c.profit, `CONTRACT ${c.id}`, c);
+            }
+        }, 2500);
+    } catch (e) { c.closing = false; $("tcClose").disabled = false; toast(`Close failed: ${e.message}`, 3000, "bad"); log(`SELL failed → ${e.message}`, "error"); }
+}
+function startPaper(dir, p, src, opt) {
+    const ob = opt.type === "HL" ? (curBar() ?? 0.5) : 0;
+    S.paper = { dir, src, opt, stake: p.ask, payout: p.payout, entry: null, ee: NaN, n: 0, secs: opt.type === "MULT" ? 0 : durSecs(opt), b: dir === "RISE" ? ob : -ob, profit: 0, t0: Date.now() };
+    S.ratio = p.payout > 0 ? p.payout / p.ask : 0; S.trades++;
+    log(`PAPER ${sideOf(opt.type, dir)} · ${kLabel()} · stake ${money(p.ask)}${p.payout ? ` · payout ${money(p.payout)}` : ""}`, "trade");
     contractUI(); ui();
+}
+function paperEnd(profit, label) {
+    const x = S.paper; if (!x) return; S.paper = null;
+    finish(round2(profit), label, x);
 }
 function paperTick(q, e) {
     const p = S.paper; if (!p) return;
     if (p.entry === null) { p.entry = q; p.ee = e; p.n = 0; contractUI(); return; }      // entry spot = first tick AFTER purchase
     p.n++;
-    const up = p.dir === "RISE";
-    if (p.mode === "MU") {
-        p.pl = p.stake * p.mult * (q - p.entry) / p.entry * (up ? 1 : -1);
-        const lim = Math.min(p.sl > 0 ? p.sl : p.stake, p.stake); let out = null;
-        if (p.tp > 0 && p.pl >= p.tp) out = p.tp; else if (p.pl <= -lim) out = -lim;
-        contractUI();
-        if (out !== null) { const x = p; S.paper = null; finish(round2(out), "PAPER", x); }
-        return;
+    if (p.opt.type === "MULT") {
+        const pr = p.stake * p.opt.mult * (q - p.entry) / p.entry * (p.dir === "RISE" ? 1 : -1), tp = p.opt.tp, sl = p.opt.sl;
+        p.profit = Math.max(pr, -p.stake);
+        if (p.profit <= -p.stake + 1e-9) return paperEnd(-p.stake, "PAPER STOP-OUT");
+        if (sl > 0 && p.profit <= -sl) return paperEnd(-sl, "PAPER STOP-LOSS");
+        if (tp > 0 && p.profit >= tp) return paperEnd(tp, "PAPER TAKE-PROFIT");
+        return void contractUI();
     }
     contractUI();
-    if (!(p.tk ? p.n >= p.tk : e >= p.ee + p.secs)) return;
-    const off = p.mode === "HL" ? p.bar : 0, win = up ? q > p.entry + off : q < p.entry - off;      // ties lose
-    const x = p; S.paper = null;
-    finish(win ? x.payout - x.stake : -x.stake, "PAPER", x);
-}
-async function sellNow() {
-    if (S.paper && S.paper.mode === "MU") { const x = S.paper; S.paper = null; return void finish(round2(x.pl), "PAPER", x); }
-    const c = S.contract; if (!c || c.closing || c.mode !== "MU") return;
-    c.closing = true;
-    try { await sendWS({ sell: c.id, price: 0 }, { timeout: 7000, type: "sell" }); log("Close requested.", "trade"); }
-    catch (e) { c.closing = false; toast(`Close failed: ${e.message}`, 3000, "bad"); }
+    if (!(p.opt.unit === "t" ? p.n >= p.opt.dv : e >= p.ee + p.secs)) return;
+    const win = p.dir === "RISE" ? q > p.entry + p.b : q < p.entry + p.b;                  // ties lose (barrier is relative to entry; 0 for Rise/Fall)
+    paperEnd(win ? p.payout - p.stake : -p.stake, "PAPER");
 }
 function finish(profit, label, x) {
-    S.pl += profit;
-    const won = profit > 0, lost = profit < 0, src = x.src || "manual";
-    log(`${label} ${x.dir} ${won ? "WIN" : lost ? "LOSS" : "FLAT"} · ${money(profit)}`, won ? "win" : lost ? "warn" : "info");
+    S.pl += profit; S.lastPL = profit;
+    const won = profit > 0, lost = profit < 0, src = x.src || "manual", kind = x.opt?.type || "RF";
+    log(`${label} ${sideOf(kind, x.dir)} ${won ? "WIN" : lost ? "LOSS" : "FLAT"} · ${money(profit)}`, won ? "win" : lost ? "warn" : "info");
     if (won) S.wins++; if (lost) S.losses++;
     if (src === "auto") S.autoTrades++;
     const lt = S.ticks[S.ticks.length - 1]; if (lt) S.marks.push({ k: "res", e: lt.e, q: lt.q, res: won ? "W" : lost ? "L" : "=" });
     if (S.marks.length > 80) S.marks.splice(0, S.marks.length - 80);
-    S.hist.unshift({ t: Date.now(), sym: S.sym, dir: x.dir, stake: x.stake, profit, src }); if (S.hist.length > 100) S.hist.pop();
+    S.hist.unshift({ t: Date.now(), sym: x.sym || S.sym, dir: x.dir, kind, stake: x.stake, profit, src }); if (S.hist.length > 100) S.hist.pop();
     flash(`${won ? "WIN" : lost ? "LOSS" : "FLAT"} ${profit >= 0 ? "+" : ""}${money(profit)}`, won ? "win" : "loss"); beep(won ? 988 : 330);
     S.cool = Date.now() + Math.max(0, SG.cooldown) * 1000; S.sigOk = false;
     S.busy = false; contractUI(true); ui(); renderTrades(); armSoon();
-    if (AM.on) S.amNext = Date.now() + 2000;
     if (SG.auto) {
-        if (S.pl <= SG.maxLoss) autoOff("MAX LOSS");
-        else if (S.pl >= SG.takeProfit) autoOff("TAKE PROFIT");
+        if (S.pl <= SG.maxLoss) autoOff("SESSION MAX LOSS");
+        else if (S.pl >= SG.takeProfit) autoOff("SESSION TAKE PROFIT");
         else if (SG.maxTrades > 0 && S.autoTrades >= SG.maxTrades) autoOff("MAX AUTO TRADES");
     }
+    if (AS.on) setTimeout(() => autoSelect("after trade"), 1200);
 }
 function resetSession() {
     if (inTrade()) return void log("Cannot reset during an open trade.", "warn");
-    Object.assign(S, { pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, hist: [] });
+    Object.assign(S, { pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, hist: [], lastPL: null });
     log("Session reset."); ui(); renderTrades();
 }
 
 /* ================================================================
-   SIGNALS + AUTO ENTRY
+   SIGNALS + AUTO ENTRY + AUTO-SELECT MARKET
 ================================================================ */
 function checkSignal(res) {
     const ok = Boolean(res?.ok), blocked = SG.auto && (inTrade() || S.busy || S.switching || Date.now() < S.cool);
@@ -749,18 +914,20 @@ function checkSignal(res) {
     const fire = ok && !S.sigOk && Date.now() > S.sigCool;
     S.sigOk = ok;
     if (!fire) return;
-    const dir = (res.dir > 0) !== SG.rev ? "RISE" : "FALL", last = S.ticks[S.ticks.length - 1];
+    const sig = res.dir > 0 ? "RISE" : "FALL", dir = SG.rev ? (sig === "RISE" ? "FALL" : "RISE") : sig, last = S.ticks[S.ticks.length - 1];
     S.sigCool = Date.now() + 3000;
     S.marks.push({ k: "sig", e: last.e, q: last.q, dir });
-    beep(dir === "RISE" ? 880 : 660); toast(`${dir}${SG.rev ? " (reversed)" : ""} signal · Q ${res.score}`, 2200, dir === "RISE" ? "ok" : "bad");
-    log(`SIGNAL ${res.dir > 0 ? "RISE" : "FALL"}${SG.rev ? ` → REVERSED to ${dir}` : ""} · ${S.sym} · Q ${res.score} · ${V.tf}`, "trade");
+    const why = res.trig.length ? ` · ${res.trig.map(t => FACT_LAB[t]).join("+")}` : "";
+    beep(dir === "RISE" ? 880 : 660);
+    toast(`${sideOf(K.type, sig)} signal${SG.rev ? ` ⇄ ${sideOf(K.type, dir)}` : ""} · Q ${res.score}`, 2400, dir === "RISE" ? "ok" : "bad");
+    log(`SIGNAL ${sideOf(K.type, sig)}${SG.rev ? ` → REVERSED → ${sideOf(K.type, dir)}` : ""} · ${S.sym} · ${V.tf} · Q ${res.score}${why}`, "trade");
     if (SG.auto && ready() && !inTrade() && !S.busy && !S.switching && Date.now() > S.cool) execute(dir, "auto", res);
 }
 function setAuto(on) {
-    if (on && S.exec === "LIVE" && S.acctType === "real" && !confirm("AUTO ENTRY on a REAL account with LIVE execution: signals will place real trades. Enable?")) { syncPSig(); return; }
+    if (on && S.exec === "LIVE" && S.acctType === "real" && !confirm(`AUTO ENTRY on a REAL account with LIVE execution (${kLabel()}): signals will place real trades. Enable?`)) { syncPSig(); return; }
     if (on) S.autoTrades = 0;
     SG.auto = on; ls.set("pw3-sg", SG); syncPSig(); ui();
-    log(`Auto entry ${on ? "ON" : "OFF"}`, on ? "trade" : "info"); toast(`Auto entry ${on ? "ON" : "OFF"}`, 1800, on ? "ok" : "");
+    log(`Auto entry ${on ? "ON" : "OFF"}${on ? ` · ${kLabel()}` : ""}`, on ? "trade" : "info"); toast(`Auto entry ${on ? "ON" : "OFF"}`, 1800, on ? "ok" : "");
 }
 function autoOff(why) { SG.auto = false; ls.set("pw3-sg", SG); syncPSig(); ui(); log(`Auto entry stopped · ${why}`, "warn"); toast(`Auto stopped: ${why}`, 3500, "bad"); }
 function sgChanged(custom = true) {
@@ -768,15 +935,53 @@ function sgChanged(custom = true) {
     ls.set("pw3-sg", SG); syncPSig(); reeval();
 }
 function applyPreset(name) {
-    if (PRESETS[name]) { Object.assign(SG, clone(PRESETS[name])); SG.preset = name; } else SG.preset = "CUSTOM";
+    if (PRESETS[name]) { const rq = SG.req; Object.assign(SG, clone(PRESETS[name])); SG.req = Object.assign({}, rq, SG.req); SG.preset = name; } else SG.preset = "CUSTOM";
     sgChanged(false);
 }
-function reeval() { if (S.ticks.length) S.res = analyze(S.ticks.length > 900 ? S.ticks.slice(-900) : S.ticks, S.zones, TFS[V.tf] ? S.cs : undefined); S.sigOk = Boolean(S.res?.ok); renderHud(); renderRank(); redraw(); }
+function reeval() { S.res = analyzeNow(); S.sigOk = Boolean(S.res?.ok); renderHud(); renderRank(); redraw(); }
 function applyParams() {
     ls.set("pw3-p", P);
-    if (S.ticks.length) { buildInd(S.ticks); rebuildCS(); S.zones = P.zOn ? findZones(S.ticks) : []; }
+    if (S.ticks.length) { buildInd(S.ticks); if (S.B.length) buildInd(S.B); S.zones = P.zOn ? findZones(series()) : []; }
     V.ema = P.emaOn; V.zones = P.zOn; V.sr = P.srOn; V.st = P.stOn;
     syncPInd(); reeval();
+}
+/* Auto-select: scan → keep/choose a market whose score is inside the chosen band. Never while a trade is open. */
+async function autoSelect(reason) {
+    clearTimeout(AS.t);
+    if (!AS.on) return;
+    const sched = ms => { clearTimeout(AS.t); AS.t = setTimeout(() => autoSelect("timer"), ms); };
+    if (!ready() || inTrade() || S.busy || S.switching) return sched(8000);
+    if (S.scanning || AS.busy) return sched(8000);
+    AS.busy = true; AS.last = Date.now(); set("asState", "scanning…");
+    try {
+        await scan(`auto-select · ${reason}`);
+        if (!AS.on || inTrade() || S.busy) return;
+        const band = S.rank.filter(r => inCat(r.score, AS.cat)), cur = band.find(r => r.sym === S.sym);
+        const pick = reason === "timer" && cur ? cur : band[0];            // the 60 s timer keeps a market that is still in band; after a trade / change we take the best
+        if (!pick) { log(`Auto-select: no market in ${CATS[AS.cat][0]} right now.`, "warn"); set("asState", "none in band"); }
+        else if (pick.sym !== S.sym) {
+            log(`Auto-select → ${pick.sym} (score ${pick.score}, ${CATS[AS.cat][0]})`, "trade");
+            if (await useMarket(pick.sym)) toast(`Market → ${pick.sym} · score ${pick.score}`, 2200, "ok");
+        } else set("asState", `${S.sym} ✓ ${pick.score}`);
+    } finally { AS.busy = false; AS.bad = 0; if (AS.on) sched(60000); syncAS(); }
+}
+function setAS(on) {
+    AS.on = on; ls.set("pw3-as", { cat: AS.cat }); clearTimeout(AS.t); syncAS();
+    log(`Auto-select market ${on ? `ON · ${CATS[AS.cat][0]}` : "OFF"}`, on ? "trade" : "info");
+    if (on) autoSelect("enabled");
+}
+function watchConditions() {                       // market conditions changed → current market left the chosen band
+    if (!AS.on || !ready() || inTrade() || S.busy || S.switching || S.scanning || AS.busy || !S.sym || S.ticks.length < 120) return;
+    const a = analyze(S.ticks.slice(-900), P.zOn ? findZones(S.ticks) : [], 0);
+    if (!a) return;
+    if (inCat(a.score, AS.cat)) { AS.bad = 0; return; }
+    if (++AS.bad >= 3 && Date.now() - AS.last > 15000) { log(`Auto-select: ${S.sym} score ${a.score} left ${CATS[AS.cat][0]} — rescanning.`, "info"); AS.bad = 0; autoSelect("conditions changed"); }
+}
+function syncAS() {
+    if ($("asOn")) $("asOn").checked = AS.on;
+    if ($("asCat")) $("asCat").value = AS.cat;
+    const c = $("asChip"); if (c) { c.textContent = AS.on ? `SELECT ${CATS[AS.cat][0].split(" · ")[0]}` : "SELECT OFF"; c.classList.toggle("on", AS.on); }
+    if (!AS.on) set("asState", "");
 }
 
 /* ================================================================
@@ -831,7 +1036,8 @@ function health() {
     if (Date.now() - S.lastMsg > NET.deadMs) { log("No data from server — dropping dead socket.", "warn"); try { S.ws.close(); } catch { } return; }
     if (S.unconfirmedUntil && Date.now() > S.unconfirmedUntil && !inTrade()) { S.unconfirmedUntil = 0; S.busy = false; S.cool = 0; log("Trading resumed."); armSoon(); manualUI(); }
     if (S.contract && !S.subCon) subscribeContract().catch(() => { });
-    if (!S.armKey && !inTrade() && !S.busy && !S.switching && S.subTick) armSoon();
+    if (!S.armKey && canArm()) armSoon();
+    if (K.type === "HL" && K.hl.mode === "payout" && S.bar && Date.now() - S.bar.at > 100000 && S.armKey && !S.busy) { S.armKey = ""; armSoon(); }   // keep the payout-derived barrier fresh
     if (S.sym && !S.busy && !inTrade() && !S.switching && Date.now() - S.lastTick > 10000) {           // stale stream → resubscribe
         S.staleHits++; log(`Tick stream stale (${S.staleHits}) — resubscribing.`, "warn"); S.lastTick = Date.now();
         useMarket(S.sym, true);
@@ -907,25 +1113,49 @@ function ui() {
     const pl = $("kPL"); pl.textContent = money(S.pl); pl.className = S.pl > 0 ? "pos" : S.pl < 0 ? "neg" : "";
     set("kWL", `${S.wins} / ${S.losses}`); set("kTrades", String(S.trades));
     const n = S.wins + S.losses;
-    set("kWR", n ? `${(S.wins / n * 100).toFixed(1)}%` : "—"); set("kBE", O.mode === "RF" || O.mode === "HL" ? `breakeven ${(100 / S.ratio).toFixed(1)}%` : "");
+    set("kWR", n ? `${(S.wins / n * 100).toFixed(1)}%` : "—"); set("kBE", S.ratio > 0 ? `breakeven ${(100 / S.ratio).toFixed(1)}%` : "multiplier: TP/SL driven");
     set("kFill", S.execMs != null ? `${S.execMs} ms` : "—");
+    showTradePL();
     $("autoTag").hidden = !SG.auto;
     const ac = $("autoChip"); ac.textContent = SG.auto ? "AUTO ON" : "AUTO OFF"; ac.classList.toggle("on", SG.auto);
-    const mc = $("amChip"); mc.textContent = AM.on ? `MKT AUTO · ${AMCAT[AM.cat].n}` : "MKT AUTO OFF"; mc.classList.toggle("on", AM.on);
+    const rv = $("revChip"); rv.textContent = SG.rev ? "⇄ REVERSE ON" : "⇄ REVERSE OFF"; rv.classList.toggle("on", SG.rev);
     $("dStake").value !== String(S.stake) && document.activeElement !== $("dStake") && ($("dStake").value = S.stake);
-    
+    const db = $("durBtn"); if (db) db.innerHTML = `⏱ <b>${durText()}</b> ▾`;
     manualUI();
+}
+function tradePL() {
+    const c = S.contract, p = S.paper;
+    if (c) return c.profit;
+    if (!p) return null;
+    if (p.opt.type === "MULT") return p.entry === null ? 0 : p.profit;
+    const q = S.ticks[S.ticks.length - 1]?.q;
+    if (p.entry === null || q === undefined) return null;
+    const w = p.dir === "RISE" ? q > p.entry + p.b : q < p.entry + p.b;
+    return w ? p.payout - p.stake : -p.stake;
+}
+function showTradePL() {                        // TRADE P/L (this trade, live) is kept apart from SESSION P/L (all closed trades)
+    const live = tradePL(), v = live ?? S.lastPL, e = $("kTP");
+    e.textContent = v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${money(v)}`;
+    e.className = v > 0 ? "pos" : v < 0 ? "neg" : "";
+    set("kTPl", live !== null ? "LIVE TRADE" : "LAST TRADE");
 }
 function manualUI() {
     const can = ready() && !inTrade() && !S.busy && !S.switching && Boolean(S.sym && S.subTick);
-    [["RISE", "mRise", 0], ["FALL", "mFall", 1]].forEach(([d, id, i]) => {
+    const solving = K.type === "HL" && K.hl.mode === "payout" && !S.pp.RISE && !S.pp.FALL && (S.barP || (S.armKey && !curBar()));
+    [["RISE", "mRise", "▲"], ["FALL", "mFall", "▼"]].forEach(([d, id, ic]) => {
         const b = $(id); if (!b) return;
         const p = fresh(d, stake()); b.disabled = !can;
-        const sp = b.querySelector("span"); if (sp) sp.textContent = MLAB[O.mode][i];
-        const em = b.querySelector("em"); if (em) em.textContent = p ? (p.ratio > 0 ? `${p.ratio.toFixed(2)}x · ${money(p.payout)}` : O.mode === "MU" ? `×${O.mult} · ${money(p.ask)}` : money(p.ask)) : "—";
+        const sp = b.querySelector("span"); if (sp) sp.textContent = `${ic} ${sideOf(K.type, d)}`;
+        const em = b.querySelector("em");
+        if (em) em.textContent = p ? (K.type === "MULT" ? `×${K.mult} · ${money(p.ask)}` : `${p.ratio.toFixed(2)}x · ${money(p.payout)}`) : solving ? "solving barrier…" : "—";
     });
-    set("mStatus", !ready() ? "Connect to trade" : inTrade() ? "Trade running…" : S.switching ? "Switching market…" : S.busy ? "Executing…"
-        : `${S.exec}${S.exec === "LIVE" ? ` · ${S.acctType.toUpperCase()}` : ""} · ${optDesc()} · ${S.sym || "—"}${SG.rev ? " · ↺ reverse" : ""}`);
+    const st = $("mStatus");
+    st.className = `mst${S.qErr ? " warn" : ""}`;
+    st.textContent = !ready() ? "Connect to trade" : inTrade() ? "Trade running…" : S.switching ? "Switching market…" : S.busy ? "Executing…"
+        : S.qErr ? `⚠ ${S.qErr}` : `${S.exec}${S.exec === "LIVE" ? ` · ${S.acctType.toUpperCase()}` : ""} · ${kLabel()} · ${S.sym || "—"}`;
+    st.title = S.qErr || "";
+    const br = $("barRead");
+    if (br) br.textContent = K.type === "HL" ? (K.hl.mode === "payout" ? (S.bar && S.bar.key === barKey() ? `${barStr(true, S.bar.o)} / ${barStr(false, S.bar.o)}` : "…") : `${barStr(true, num(K.hl.barrier, 0.5))} / ${barStr(false, num(K.hl.barrier, 0.5))}`) : "";
 }
 function renderHud() {
     const T = S.ticks, n = T.length, r = S.res;
@@ -937,60 +1167,57 @@ function renderHud() {
     if (!V.cx) setRead(n ? n - 1 : -1);
     document.querySelectorAll("#meter .mc").forEach(b => {
         const id = b.dataset.f, row = r?.rows.find(x => x.id === id);
-        b.className = `mc ${!row ? "" : row.off ? "off" : row.pass ? "ok" : "no"}${SG.req[id] ? " req" : ""}`;
+        b.className = `mc ${!row ? "" : row.off ? "off" : row.pass ? "ok" : "no"}${SG.req[id] ? " req" : ""}${TRIGS.includes(id) ? " trg" : ""}`;
         b.title = `${FACT_NAME[id]}${row ? ` — ${row.val}` : ""}\nclick: ${SG.req[id] ? "stop requiring" : "require"} for signals`;
     });
     if (r) {
         $("qBar").style.width = `${r.score}%`; set("qVal", `Q ${r.score}`);
-        const h = $("hBias"); h.textContent = `${r.dir > 0 ? "▲ RISE" : "▼ FALL"} BIAS`; h.className = `chip ${r.dir > 0 ? "up" : "dn"}`;
-        const b = $("sigBadge");
-        if (r.ok) { const d = (r.dir > 0) !== SG.rev; b.className = `badge ${d ? "rise" : "fall"}`; b.textContent = `${d ? "RISE" : "FALL"} READY${SG.rev ? " ↺" : ""}`; }
+        const h = $("hBias"); h.textContent = `${r.dir > 0 ? "▲ BUY" : "▼ SELL"} BIAS`; h.className = `chip ${r.dir > 0 ? "up" : "dn"}`;
+        const b = $("sigBadge"), sg = r.dir > 0 ? "RISE" : "FALL", ex = SG.rev ? (r.dir > 0 ? "FALL" : "RISE") : sg;
+        if (r.ok) { b.className = `badge ${ex === "RISE" ? "rise" : "fall"}`; b.textContent = `${sideOf(K.type, sg)} READY${SG.rev ? ` ⇄ ${sideOf(K.type, ex)}` : ""}`; }
         else { const near = r.passed >= r.total - 2; b.className = `badge${near ? " watch" : ""}`; b.textContent = near ? `FORMING ${r.passed}/${r.total}` : "WAITING"; }
     } else {
         $("qBar").style.width = "0"; set("qVal", "Q —"); $("hBias").textContent = "BIAS —"; $("hBias").className = "chip mut"; $("sigBadge").className = "badge"; $("sigBadge").textContent = "WAITING";
     }
 }
 function setRead(i) {
-    const T = S.ticks, e = $("hRead");
+    const T = S.ticks, e = $("hRead"), tf = TFS[V.tf];
     if (i < 0 || i >= T.length) { e.textContent = "—"; return; }
     const t = T[i], d = new Date(t.e * 1000).toLocaleTimeString([], { hour12: false });
-    let s = `${d}  ${t.q.toFixed(dec())}`;
-    if (P.emaOn) s += `  ·  EMA${P.ema} ${t.m.toFixed(dec())}`;
-    if (P.srOn) s += `  ·  K ${t.k.toFixed(0)} D ${t.dd.toFixed(0)}`;
-    if (P.stOn) s += `  ·  ST ${t.sdir > 0 ? "▲" : "▼"}`;
-    const tfs = TFS[V.tf];
-    if (tfs && G) { const b = Math.floor(t.e / tfs) * tfs, c = buildCandles(T, tfs, b, b + tfs - 1)[0]; if (c) s += `  ·  O ${c.o.toFixed(dec())} H ${c.h.toFixed(dec())} L ${c.l.toFixed(dec())} C ${c.c.toFixed(dec())}`; }
+    let src = t, s = `${d}  ${t.q.toFixed(dec())}`;
+    if (tf && S.B.length) { const j = clamp(lb(S.B, t.e + 1) - 1, 0, S.B.length - 1); src = S.B[j]; s += `  ·  O ${src.o.toFixed(dec())} H ${src.h.toFixed(dec())} L ${src.l.toFixed(dec())} C ${src.c.toFixed(dec())}`; }
+    if (P.emaOn) s += `  ·  EMA${P.ema} ${src.m.toFixed(dec())}`;
+    if (P.srOn) s += `  ·  K ${src.k.toFixed(0)} D ${src.dd.toFixed(0)}`;
+    if (P.stOn) s += `  ·  ST ${src.sdir > 0 ? "▲" : "▼"}`;
     e.textContent = s;
 }
-function contractUI(clear = false) {
+const fmtLeft = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}m` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+function contractUI() {
     const c = S.contract, p = S.paper, x = c || p, card = $("tradeCard");
-    if (!x) { card.hidden = true; return; }
-    const mu = x.mode === "MU", lastE = S.ticks[S.ticks.length - 1]?.e || 0;
-    card.hidden = false; set("tcSide", `${x.dir === "RISE" ? "▲" : "▼"} ${mu ? (x.dir === "RISE" ? "UP" : "DOWN") : x.dir}`);
-    let frac = 0, txt = "";
-    if (mu) txt = `OPEN ×${x.mult}`;
-    else if (x.tk) { const n = c ? c.ticks : p.n; frac = n / x.tk; txt = `${Math.min(n, x.tk)} / ${x.tk}t`; }
+    if (!x) { card.hidden = true; showTradePL(); return; }
+    const o = x.opt, kind = o.type;
+    card.hidden = false; set("tcSide", `${x.dir === "RISE" ? "▲" : "▼"} ${sideOf(kind, x.dir)}${kind === "MULT" ? ` ×${o.mult}` : ""}`);
+    let pct = 0, txt = "";
+    if (kind === "MULT") { txt = `${o.tp > 0 ? "TP " + money(o.tp) : "TP off"} · ${o.sl > 0 ? "SL " + money(o.sl) : "SL off"}`; pct = 0; }
+    else if (o.unit === "t") { const n = c ? c.ticks : p.n; txt = `${Math.min(n, o.dv)} / ${o.dv} ticks`; pct = n / o.dv * 100; }
     else {
-        const s0 = c ? c.ds : p.ee, tot = (c && c.de > c.ds ? c.de - c.ds : x.secs) || 1, el = Number.isFinite(s0) ? Math.max(0, lastE - s0) : 0;
-        frac = el / tot; txt = `${Math.min(Math.round(el), Math.round(tot))} / ${Math.round(tot)}s`;
+        const start = c ? c.tstart : p.t0, end = c ? (Number.isFinite(c.exp) ? c.exp : c.tstart + c.secs * 1000) : p.t0 + p.secs * 1000;
+        txt = `${fmtLeft(end - Date.now())} left`; pct = (Date.now() - start) / Math.max(1, end - start) * 100;
     }
     set("tcN", txt);
-    const el = $("tcPL");
-    if (c) { el.textContent = money(c.profit); el.className = c.profit >= 0 ? "pos" : "neg"; }
-    else if (mu) { el.textContent = money(p.pl); el.className = p.pl >= 0 ? "pos" : "neg"; }
-    else {
-        const q = S.ticks[S.ticks.length - 1]?.q, en = p.entry;
-        if (en !== null && q !== undefined) { const off = p.mode === "HL" ? p.bar : 0, w = p.dir === "RISE" ? q > en + off : q < en - off; el.textContent = w ? `+${money(p.payout - p.stake)}` : money(-p.stake); el.className = w ? "pos" : "neg"; }
-        else { el.textContent = "entering…"; el.className = ""; }
-    }
-    $("tcBar").style.width = `${clamp(frac * 100, 0, 100)}%`; $("tcBar").parentElement.hidden = mu; $("tcClose").hidden = !mu;
+    const live = tradePL(), el = $("tcPL");
+    if (live === null) { el.textContent = "entering…"; el.className = ""; }
+    else { el.textContent = `${live >= 0 ? "+" : ""}${money(live)}`; el.className = live >= 0 ? "pos" : "neg"; }
+    $("tcBar").style.width = `${clamp(pct, 0, 100)}%`;
     $("tcSide").className = x.dir === "RISE" ? "pos" : "neg";
+    $("tcClose").hidden = kind !== "MULT"; $("tcClose").disabled = Boolean(c && c.closing);
+    showTradePL();
 }
 function renderTrades() {
     const b = $("tradeRows"); if (!b) return; b.innerHTML = "";
     S.hist.forEach(h => {
         const tr = document.createElement("tr"); tr.style.cursor = "default";
-        [[new Date(h.t).toLocaleTimeString([], { hour12: false }), ""], [h.sym, ""], [`${h.dir === "RISE" ? "▲" : "▼"}${h.src === "auto" ? " A" : ""}`, h.dir === "RISE" ? "up" : "dn"], [money(h.stake), ""], [`${h.profit >= 0 ? "+" : ""}${money(h.profit)}`, h.profit > 0 ? "up" : h.profit < 0 ? "dn" : ""]]
+        [[new Date(h.t).toLocaleTimeString([], { hour12: false }), ""], [h.sym, ""], [`${h.dir === "RISE" ? "▲" : "▼"} ${KSHORT[h.kind] || ""}${h.src === "auto" ? " A" : ""}`, h.dir === "RISE" ? "up" : "dn"], [money(h.stake), ""], [`${h.profit >= 0 ? "+" : ""}${money(h.profit)}`, h.profit > 0 ? "up" : h.profit < 0 ? "dn" : ""]]
             .forEach(([v, c]) => { const td = document.createElement("td"); td.textContent = v; if (c) td.className = c; tr.appendChild(td); });
         b.appendChild(tr);
     });
@@ -1001,20 +1228,67 @@ function setStake(v) {
 }
 function manualTrade(dir) { execute(dir, "manual"); }
 
+/* ---------- trade-option dock: tabs + an option row that reshapes itself per contract family ---------- */
+function kSave(structural) { ls.set("pw3-k", K); if (structural) renderDock(); ui(); armSoon(150); reeval(); }
+function setKind(t) {
+    if (t === K.type) return;
+    if (inTrade() || S.busy) return void toast("Finish the open trade first.", 2000, "bad");
+    K.type = t;
+    if (t === "HL" && K.unit === "t") { K.unit = "m"; K.dv = 1; }                 // Higher/Lower has no tick durations
+    if (t === "MULT") snapMult();
+    S.bar = null; S.qErr = ""; S.ratio = 1.9;
+    if (SG.auto) autoOff("TRADE OPTION CHANGED — set its values, then start auto again");
+    log(`Trade option → ${kLabel()}`); kSave(true);
+}
+function setDur(unit, v) {
+    const [a, b] = DLIM[unit]; if (K.type === "HL" && unit === "t") return;
+    K.unit = unit; K.dv = clamp(Math.floor(num(v, K.dv)), a, b); kSave(true); closeDurPop();
+}
+function renderDock() {
+    $("kindTabs").querySelectorAll("[data-k]").forEach(b => b.classList.toggle("on", b.dataset.k === K.type));
+    let h = "";
+    if (K.type !== "MULT") h += `<button class="pill" id="durBtn" title="Trade duration — ticks, seconds, minutes, hours">⏱ <b>${durText()}</b> ▾</button>`;
+    if (K.type === "RF") h += `<label class="chk eq" title="Equals wins too: CALLE / PUTE"><input type="checkbox" id="optEq"${K.eq ? " checked" : ""}> equals</label>`;
+    if (K.type === "HL") {
+        h += `<div class="seg" id="barMode"><button data-m="manual" class="${K.hl.mode === "manual" ? "on" : ""}" title="You set the barrier distance">BARRIER</button><button data-m="payout" class="${K.hl.mode === "payout" ? "on" : ""}" title="Barrier is calculated from your target payout for every market">PAYOUT</button></div>`;
+        h += K.hl.mode === "manual"
+            ? `<label class="ofld" title="Barrier distance from entry (price points). Higher uses +, Lower uses −. Negative = in-the-money.">± <input id="optBar" type="number" step="any" value="${K.hl.barrier}"></label>`
+            : `<label class="ofld" title="Target payout multiple of your stake">× <input id="optTgt" type="number" step="0.05" min="1.05" max="10" value="${K.hl.target}"></label>`;
+        h += `<span class="rd" id="barRead"></span>`;
+    }
+    if (K.type === "MULT") {
+        h += `<label class="ofld">× <select id="optMult">${multList(S.sym).map(m => `<option${m === K.mult ? " selected" : ""}>${m}</option>`).join("")}</select></label>`;
+        h += `<label class="ofld tp">TP $ <input id="optTp" type="number" min="0" step="any" placeholder="off" value="${K.tp || ""}"></label>`;
+        h += `<label class="ofld sl">SL $ <input id="optSl" type="number" min="0" step="any" placeholder="off" value="${K.sl || ""}"></label>`;
+    }
+    $("optRow").innerHTML = h; closeDurPop(); manualUI();
+}
+function closeDurPop() { $("durPop").hidden = true; }
+function openDurPop(unit) {
+    const pop = $("durPop"); unit = unit || K.unit;
+    const units = K.type === "HL" ? ["s", "m", "h"] : ["t", "s", "m", "h"];
+    if (!units.includes(unit)) unit = units[0];
+    pop.innerHTML = `<div class="dp-t">${units.map(u => `<button data-u="${u}" class="${u === unit ? "on" : ""}">${UNAME[u]}</button>`).join("")}</div>
+      <div class="dp-g">${DPRE[unit].map(v => `<button data-v="${v}" data-u="${unit}" class="${K.unit === unit && K.dv === v ? "on" : ""}">${v}</button>`).join("")}</div>
+      <div class="dp-c"><input id="dpCustom" type="number" min="${DLIM[unit][0]}" max="${DLIM[unit][1]}" placeholder="custom ${UNAME[unit].toLowerCase()}…" inputmode="numeric"><button data-u="${unit}" id="dpSet">SET</button></div>`;
+    pop.hidden = false;
+}
+
 /* ---------- drawer panels (generated from schemas) ---------- */
 const PSCHEMA = [
     { g: "EMA LINE", on: "emaOn", f: [["ema", "Period", 3, 200, 1]] },
     { g: "SUPPLY / DEMAND ZONES", on: "zOn", f: [["zoneW", "Zone width σ", 0.3, 6, 0.1], ["zoneImp", "Impulse σ", 1, 12, 0.5]] },
     { g: "STOCHASTIC RSI", on: "srOn", f: [["rsi", "RSI length", 2, 50, 1], ["stoch", "Stoch length", 2, 50, 1], ["k", "%K smooth", 1, 10, 1], ["d", "%D smooth", 1, 10, 1]] },
-    { g: "SUPERTREND", on: "stOn", f: [["atr", "ATR length", 3, 100, 1], ["mul", "Multiplier", 1, 10, 0.5]] }
+    { g: "SUPERTREND (ST line)", on: "stOn", f: [["atr", "ATR length", 3, 100, 1], ["mul", "Multiplier", 1, 10, 0.5]] }
 ];
-const SSCHEMA = [["z5Min", "5m trend z ≥", 0.2, 4, 0.1], ["z1Min", "1m trend z ≥", 0, 3, 0.1], ["holdMin", "Ticks held before cross", 1, 10, 1], ["crossMin", "Cross strength σ", 0, 2, 0.05],
-["crossWin", "Cross window (ticks)", 1, 6, 1], ["maxFlips", "Max chop flips", 0, 12, 1], ["volCap", "Volatility ceiling", 1, 4, 0.1], ["volMin", "Volatility floor", 0.1, 1.5, 0.05],
-["zoneRoom", "Zone room ×", 0, 4, 0.1], ["srLow", "StochRSI zone", 10, 45, 5], ["minQ", "Min score Q", 0, 100, 5], ["xWin", "Double-cross window (bars)", 2, 40, 1]];
-const AFIELDS = [["cooldown", "Cooldown (s)", 0, 600, 1], ["maxTrades", "Max auto trades (0=∞)", 0, 999, 1], ["takeProfit", "Session take profit $", 1, 99999, 1], ["maxLoss", "Session max loss $", -99999, -1, 1], ["minPayout", "Min payout ×", 1, 3, 0.01], ["maxStakePct", "Max stake % of balance", 0, 100, 0.1], ["maxStakeAbs", "Max stake $ (0=off)", 0, 99999, 1]];
+const SSCHEMA = [["z5Min", "Main trend z ≥", 0.2, 4, 0.1], ["z1Min", "Short trend z ≥", 0, 3, 0.1], ["holdMin", "Steps held before cross", 1, 10, 1], ["crossMin", "Cross strength σ", 0, 2, 0.05],
+["crossWin", "EMA cross window", 1, 6, 1], ["dualWin", "EMA+ST window", 3, 30, 1], ["zWin", "Zone break window", 2, 20, 1], ["maxFlips", "Max chop flips", 0, 12, 1], ["volCap", "Volatility ceiling", 1, 4, 0.1], ["volMin", "Volatility floor", 0.1, 1.5, 0.05],
+["zoneRoom", "Zone room ×", 0, 4, 0.1], ["srLow", "StochRSI zone", 10, 45, 5], ["minQ", "Min score Q", 0, 100, 5]];
+const AFIELDS = [["cooldown", "Cooldown (s)", 0, 600, 1], ["maxTrades", "Max auto trades (0=∞)", 0, 999, 1], ["takeProfit", "Session take profit $", 1, 99999, 1], ["maxLoss", "Session max loss $", -99999, -1, 1], ["minPayout", "Min payout ×", 1, 3, 0.01]];
 const nf = (attr, f) => `<label>${f[1]}<input type="number" data-${attr}="${f[0]}" min="${f[2]}" max="${f[3]}" step="${f[4]}"></label>`;
+const chkBox = id => `<label class="chk"><input type="checkbox" data-req="${id}"> ${FACT_NAME[id]}</label>`;
 function buildPanes() {
-    let h = `<p class="note">Indicators run on the <b>tick stream</b> — what the contract settles on — whichever candle timeframe you view.</p>`;
+    let h = `<p class="note">Indicators and signals run on the <b>chart timeframe you are viewing</b> (ticks or candles). The contract itself settles on the option you set under the chart.</p>`;
     PSCHEMA.forEach(s => { h += `<div class="ig"><label class="switch"><input type="checkbox" data-p="${s.on}"><span></span> ${s.g}</label><div class="grid2">${s.f.map(f => nf("p", f)).join("")}</div></div>`; });
     h += `<label class="switch"><input type="checkbox" data-p="marks"><span></span> Show signal / entry markers</label><button id="pReset" class="btn full">RESET INDICATORS</button>`;
     $("paneInd").innerHTML = h;
@@ -1025,33 +1299,26 @@ function buildPanes() {
     });
     $("pReset").onclick = () => { Object.assign(P, P0); applyParams(); };
     h = `<label>Preset<select id="sgPreset"><option>SAFE</option><option>BALANCED</option><option>FAST</option><option>CUSTOM</option></select></label>
-      <p class="note">A signal fires when every <b>required</b> confirmation passes and the score reaches the minimum. Tap the chips on the chart to require / unrequire them too.</p>
-      <div class="sub">ENTRY TRIGGER <small style="display:inline">· runs on the chart timeframe you are viewing</small></div>
-      <label>Trigger<select id="sgTrig"><option value="CONF">Confluence (score + required boxes)</option><option value="XCROSS">EMA + Supertrend double-cross</option><option value="ZONE">Supply / demand zone trigger</option></select></label>
-      <label>Zone trigger<select id="sgZMode"><option value="OFF">Off</option><option value="TOUCH">Touch (enter zone with bias)</option><option value="BREAK">Break (pierce zone with bias)</option><option value="BOTH">Touch + Break</option></select></label>
-      <label class="switch"><input type="checkbox" data-sg="rev"><span></span> Reverse signal (RISE signal opens FALL)</label>
-      <div class="sub">REQUIRED CONFIRMATIONS</div><div class="reqs">${FACT.map(([id]) => `<label class="chk"><input type="checkbox" data-req="${id}"> ${FACT_NAME[id]}</label>`).join("")}</div>
+      <label class="switch rev"><input type="checkbox" id="sgRev"><span></span> ⇄ REVERSE signals <small>buy signal opens a SELL, sell signal opens a BUY</small></label>
+      <p class="note">A signal fires when its <b>trigger</b> event happens and every ticked <b>confirmation</b> passes. Tap the chips on the chart to tick / untick them too.</p>
+      <div class="sub">TRIGGERS · the entry event</div><div class="reqs">${TRIGS.map(chkBox).join("")}</div>
+      <label>Trigger logic<select data-sgs="trigMode"><option value="ALL">ALL ticked triggers together</option><option value="ANY">ANY one ticked trigger</option></select></label>
+      <label>Zone-play mode<select data-sgs="zpMode"><option value="BOTH">Breaks + zone entries</option><option value="BREAK">Breaks (and retests) only</option><option value="ENTRY">Entering a zone only</option></select></label>
+      <p class="note"><b>EMA</b> = price crosses the EMA in the trend direction. <b>EMA+ST</b> = price crosses the EMA <i>and</i> the ST line the same way (up → buy, down → sell). <b>ZONE▸</b> = supply/demand break, retest, or the moment price enters a zone.</p>
+      <div class="sub">CONFIRMATIONS</div><div class="reqs">${FACT.filter(([id]) => !TRIGS.includes(id)).map(([id]) => chkBox(id)).join("")}</div>
       <div class="sub">THRESHOLDS</div><div class="grid2">${SSCHEMA.map(f => nf("sg", f)).join("")}</div>
-      <div class="sub">MARKET AUTO-SELECT</div>
-      <label class="switch"><input type="checkbox" id="amOn"><span></span> Auto-select a market by score band</label>
-      <label>Category<select id="amCat"><option value="VHIGH">Very high · 75%+</option><option value="HIGH">High · 56–74%</option><option value="MED">Medium · 50–55%</option><option value="LOW">Low · 25–49%</option><option value="VLOW">Very low · below 25%</option></select></label>
-      <label>Rescan every (s)<input type="number" id="amEvery" min="20" max="900" step="5"></label>
-      <p class="note">Scans on the timer (never mid-trade), after every trade, and when the current market leaves the band. Your trade option below the chart is kept.</p>
       <div class="sub">AUTO ENTRY</div>
       <label class="switch"><input type="checkbox" id="sgAuto"><span></span> Auto-enter when a signal fires</label>
       <label class="switch"><input type="checkbox" data-sg="sound"><span></span> Sound alerts</label>
       <div class="grid2">${AFIELDS.map(f => nf("sg", f)).join("")}</div>
-      <p class="note">Auto uses the stake and duration set under the chart and stops itself at your take-profit, max-loss or trade limit.</p>`;
+      <p class="note">Auto trades exactly the option set under the chart (Rise/Fall, Higher/Lower or Multiplier + its duration / barrier / TP / SL). Changing the option type stops auto; set its values and start auto again. Session limits above apply to the SESSION P/L.</p>`;
     $("paneSig").innerHTML = h;
     $("paneSig").addEventListener("change", ev => {
         const e = ev.target;
         if (e.id === "sgPreset") return applyPreset(e.value);
-        if (e.id === "sgTrig") return applyTrig(e.value);
-        if (e.id === "sgZMode") { SG.zMode = e.value; return sgChanged(false); }
-        if (e.id === "amOn") return setAM(e.checked);
-        if (e.id === "amCat") { AM.cat = e.value; saveAM(); S.amNext = 0; return ui(); }
-        if (e.id === "amEvery") { AM.every = clamp(num(e.value, 60), 20, 900); return saveAM(); }
         if (e.id === "sgAuto") return setAuto(e.checked);
+        if (e.id === "sgRev") { SG.rev = e.checked; return sgChanged(false); }
+        if (e.dataset.sgs) { SG[e.dataset.sgs] = e.value; return sgChanged(false); }
         if (e.dataset.req) { SG.req[e.dataset.req] = e.checked ? 1 : 0; return sgChanged(); }
         const k = e.dataset.sg; if (!k) return;
         SG[k] = e.type === "checkbox" ? e.checked : clamp(num(e.value, SG[k]), num(e.min, -1e9), num(e.max, 1e9));
@@ -1065,10 +1332,12 @@ function syncPInd() {
     V.ema = P.emaOn; V.zones = P.zOn; V.sr = P.srOn; V.st = P.stOn;
 }
 function syncPSig() {
-    $("sgPreset").value = SG.preset; $("sgAuto").checked = SG.auto; $("sgTrig").value = SG.trig; $("sgZMode").value = SG.zMode; $("amOn").checked = AM.on; $("amCat").value = AM.cat; $("amEvery").value = AM.every;
+    $("sgPreset").value = SG.preset; $("sgAuto").checked = SG.auto; $("sgRev").checked = SG.rev;
     document.querySelectorAll("#paneSig [data-req]").forEach(e => { e.checked = Boolean(SG.req[e.dataset.req]); });
     document.querySelectorAll("#paneSig [data-sg]").forEach(e => { const v = SG[e.dataset.sg]; if (e.type === "checkbox") e.checked = Boolean(v); else e.value = v; });
+    document.querySelectorAll("#paneSig [data-sgs]").forEach(e => { e.value = SG[e.dataset.sgs]; });
     $("autoTag").hidden = !SG.auto;
+    const rv = $("revChip"); if (rv) { rv.textContent = SG.rev ? "⇄ REVERSE ON" : "⇄ REVERSE OFF"; rv.classList.toggle("on", SG.rev); }
 }
 function openDrawer(tab) {
     const d = $("drawer"), cur = d.dataset.tab;
@@ -1110,25 +1379,24 @@ function draw() {
     const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const W = rc.width, H = rc.height; g.clearRect(0, 0, W, H);
     g.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
-    const T = S.ticks;
+    const T = S.ticks, tfs = TFS[V.tf], SR = tfs ? S.B : T, bo = tfs ? tfs / 2 : 0;
+    if (tfs && T.length >= 3 && SR.length < 3) { g.fillStyle = "#8696b8"; g.fillText("Loading candles…", 60, H / 2); G = null; return; }
     if (T.length < 3) { g.fillStyle = "#8696b8"; g.fillText(ready() ? "Loading ticks…" : "Sign in / connect to stream a market.", 60, H / 2); G = null; return; }
 
     const L = 46, R = 74, Tp = W < 760 ? 78 : 50, B = 22, subOn = P.srOn && V.sr, subH = subOn ? Math.round((H - Tp - B) * 0.2) : 0, gap = subOn ? 8 : 0;
     const PW = W - L - R, PH = H - Tp - B - subH - gap, subTop = Tp + PH + gap;
     const last = T[T.length - 1].e, span = V.span, maxOff = Math.max(0, last - T[0].e - span * 0.25);
     V.off = clamp(V.off, 0, maxOff);
-    const tR = last + span * 0.08 - V.off, tL = tR - span, tfs = TFS[V.tf];
+    const tR = last + span * 0.08 - V.off, tL = tR - span;
     const X = e => L + PW * (e - tL) / span;
-    const i0 = Math.max(0, lb(T, tL) - 1), i1 = Math.min(T.length, lb(T, tR) + 1), step = Math.max(1, Math.ceil((i1 - i0) / (PW * 1.2)));
-    const IND = tfs ? S.cs : T, j0 = Math.max(0, lb(IND, tL) - 1), j1 = Math.min(IND.length, lb(IND, tR) + 1), jstep = Math.max(1, Math.ceil((j1 - j0) / (PW * 1.2))), ox = tfs ? tfs / 2 : 0;
+    const i0 = Math.max(0, lb(SR, tL - bo) - 1), i1 = Math.min(SR.length, lb(SR, tR - bo) + 1), step = Math.max(1, Math.ceil((i1 - i0) / (PW * 1.2)));
     let lo = Infinity, hi = -Infinity, cds = null;
-    if (tfs) { cds = buildCandles(T, tfs, tL, tR); cds.forEach(c => { if (c.l < lo) lo = c.l; if (c.h > hi) hi = c.h; }); }
+    if (tfs) { cds = []; for (let i = i0; i < i1; i++) { const b = SR[i]; cds.push({ t: b.e, o: b.o, h: b.h, l: b.l, c: b.c }); } cds.forEach(c => { if (c.l < lo) lo = c.l; if (c.h > hi) hi = c.h; }); }
     for (let i = i0; i < i1; i++) {
-        const t = T[i];
+        const t = SR[i];
         if (!tfs) { if (t.q < lo) lo = t.q; if (t.q > hi) hi = t.q; }
-        if (V.ema && !tfs) { if (t.m < lo) lo = t.m; if (t.m > hi) hi = t.m; }
+        if (V.ema) { if (t.m < lo) lo = t.m; if (t.m > hi) hi = t.m; }
     }
-    if (tfs && V.ema) for (let j = j0; j < j1; j++) { const t = IND[j]; if (t.m < lo) lo = t.m; if (t.m > hi) hi = t.m; }
     const ent = S.contract?.entry ?? S.paper?.entry;
     if (Number.isFinite(ent)) { lo = Math.min(lo, ent); hi = Math.max(hi, ent); }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = T[T.length - 1].q - 1; hi = lo + 2; }
@@ -1189,8 +1457,8 @@ function draw() {
     if (V.st && P.stOn) {
         g.lineWidth = 1.6; let run = null;
         const flush = () => { if (run) { g.stroke(); run = null; } };
-        for (let i = j0; i < j1; i += jstep) {
-            const t = IND[i], px = X(t.e + ox), py = Y(t.st);
+        for (let i = i0; i < i1; i += step) {
+            const t = SR[i], px = X(t.e + bo), py = Y(t.st);
             if (!run || run.d !== t.sdir) { flush(); g.strokeStyle = t.sdir > 0 ? "rgba(34,227,161,.75)" : "rgba(255,77,109,.75)"; g.beginPath(); g.moveTo(px, py); run = { d: t.sdir }; }
             else g.lineTo(px, py);
         }
@@ -1199,7 +1467,7 @@ function draw() {
     // EMA (the exact line the strategy trades)
     if (V.ema && P.emaOn) {
         g.strokeStyle = "#c4b5fd"; g.lineWidth = 1.8; g.beginPath();
-        for (let i = j0; i < j1; i += jstep) (i === j0 ? g.moveTo(X(IND[i].e + ox), Y(IND[i].m)) : g.lineTo(X(IND[i].e + ox), Y(IND[i].m)));
+        for (let i = i0; i < i1; i += step) (i === i0 ? g.moveTo(X(SR[i].e + bo), Y(SR[i].m)) : g.lineTo(X(SR[i].e + bo), Y(SR[i].m)));
         g.stroke();
     }
     // drawings
@@ -1229,7 +1497,7 @@ function draw() {
         g.save(); g.beginPath(); g.rect(L, subTop, PW, subH); g.clip(); g.lineWidth = 1.4;
         [["dd", "#fbbf24"], ["k", "#22d3ee"]].forEach(([key, col]) => {
             g.strokeStyle = col; g.beginPath();
-            for (let i = j0; i < j1; i += jstep) (i === j0 ? g.moveTo(X(IND[i].e + ox), Y2(IND[i][key])) : g.lineTo(X(IND[i].e + ox), Y2(IND[i][key])));
+            for (let i = i0; i < i1; i += step) (i === i0 ? g.moveTo(X(SR[i].e + bo), Y2(SR[i][key])) : g.lineTo(X(SR[i].e + bo), Y2(SR[i][key])));
             g.stroke();
         });
         g.restore(); g.fillStyle = "#8696b8"; g.fillText(`StochRSI ${P.rsi}·${P.stoch}·${P.k}·${P.d}`, L + 6, subTop + 12);
@@ -1364,7 +1632,7 @@ function toggleFS(force) {
 ================================================================ */
 function wire() {
     const on = (id, fn, ev = "click") => $(id)?.addEventListener(ev, fn);
-    wireOpt();
+    renderDock(); syncAS();
     buildMeter(); buildPanes();
     // login / account
     on("liGo", oauthLogin); on("logoutBtn", logout);
@@ -1395,12 +1663,37 @@ function wire() {
     on("dStake", () => setStake($("dStake").value), "change");
     on("mMinus", () => setStake(S.stake <= 1 ? S.stake - 0.05 : S.stake - 0.5)); on("mPlus", () => setStake(S.stake < 1 ? S.stake + 0.05 : S.stake + 0.5));
     on("mHalf", () => setStake(S.stake / 2)); on("mDouble", () => setStake(S.stake * 2));
-    
+    // trade option dock
+    $("kindTabs").addEventListener("click", ev => { const b = ev.target.closest("[data-k]"); if (b) setKind(b.dataset.k); });
+    $("optRow").addEventListener("click", ev => {
+        if (ev.target.closest("#durBtn")) { $("durPop").hidden ? openDurPop() : closeDurPop(); return; }
+        const m = ev.target.closest("#barMode [data-m]"); if (m && K.hl.mode !== m.dataset.m) { K.hl.mode = m.dataset.m; S.bar = null; kSave(true); }
+    });
+    $("optRow").addEventListener("change", ev => {
+        const e = ev.target;
+        if (e.id === "optEq") { K.eq = e.checked; kSave(false); }
+        else if (e.id === "optBar") { K.hl.barrier = num(e.value, 0.5); kSave(false); }
+        else if (e.id === "optTgt") { K.hl.target = clamp(num(e.value, 1.9), 1.05, 10); e.value = K.hl.target; S.bar = null; kSave(false); }
+        else if (e.id === "optMult") { K.mult = Number(e.value); kSave(false); }
+        else if (e.id === "optTp") { K.tp = Math.max(0, num(e.value, 0)); kSave(false); }
+        else if (e.id === "optSl") { K.sl = Math.max(0, num(e.value, 0)); kSave(false); }
+    });
+    $("durPop").addEventListener("click", ev => {
+        const b = ev.target.closest("button"); if (!b) return;
+        if (b.id === "dpSet") { const v = $("dpCustom").value; if (v !== "") setDur(b.dataset.u, v); return; }
+        if (b.dataset.v) return setDur(b.dataset.u, b.dataset.v);
+        if (b.dataset.u) openDurPop(b.dataset.u);
+    });
+    $("durPop").addEventListener("keydown", ev => { if (ev.key === "Enter") $("dpSet").click(); });
+    document.addEventListener("pointerdown", ev => { const p = $("durPop"); if (!p.hidden && !p.contains(ev.target) && !ev.target.closest("#durBtn")) closeDurPop(); });
+    on("tcClose", closeTrade);
+    on("revChip", () => { SG.rev = !SG.rev; sgChanged(false); toast(`Reverse ${SG.rev ? "ON — signals open the opposite side" : "OFF"}`, 2000, SG.rev ? "ok" : ""); });
+    on("asChip", () => setAS(!AS.on)); on("asOn", () => setAS($("asOn").checked));
+    on("asCat", () => { AS.cat = $("asCat").value; ls.set("pw3-as", { cat: AS.cat }); syncAS(); if (AS.on) autoSelect("category changed"); }, "change");
     // chart toolbar
     $("tfBtns").addEventListener("click", ev => {
         const b = ev.target.closest("[data-tf]"); if (!b) return;
-        V.tf = b.dataset.tf; V.span = SPAN[V.tf]; V.off = 0; V.ys = 1;
-        document.querySelectorAll("#tfBtns [data-tf]").forEach(x => x.classList.toggle("on", x === b)); rebuildCS(); S.sigOk = false; reeval();
+        setTF(b.dataset.tf);
     });
     $("toolBtns").addEventListener("click", ev => {
         if (ev.target.id === "clrDraw") { if (S.sym && (D.items[S.sym] || []).length && confirm("Clear all drawings on this market?")) { D.items[S.sym] = []; saveDraw(); redraw(); } return; }
@@ -1434,318 +1727,10 @@ function wire() {
     });
     wireChart(); setTool("cursor");
 }
-/* ================================================================
-   v3.1  ·  TRADE OPTIONS (Rise/Fall · Higher/Lower · Multipliers · Vanillas)
-         ·  CHART-TIMEFRAME SIGNALS  ·  MARKET AUTO-SELECT
-================================================================ */
-const O = Object.assign({ mode: "RF", dm: { RF: { u: "t", v: 5 }, HL: { u: "m", v: 2 }, VN: { u: "m", v: 5 } }, hlMode: "payout", hlPay: 2.5, hlOff: 0.5, mult: 100, tp: 0, sl: 0, vnBar: "" }, ls.get("pw3-opt", {}));
-const saveO = () => ls.set("pw3-opt", O);
-const AM = Object.assign({ on: false, cat: "VHIGH", every: 60 }, ls.get("pw3-am", {})); AM.on = false;
-const saveAM = () => ls.set("pw3-am", AM);
-const AMCAT = { VHIGH: { n: "V.HIGH", r: [75, 100] }, HIGH: { n: "HIGH", r: [56, 74] }, MED: { n: "MED", r: [50, 55] }, LOW: { n: "LOW", r: [25, 49] }, VLOW: { n: "V.LOW", r: [0, 24] } };
-const UNITS = { RF: ["t", "s", "m", "h"], HL: ["s", "m", "h"], VN: ["m", "h", "d"] };
-const UL = { t: "ticks", s: "seconds", m: "minutes", h: "hours", d: "days" };
-const U_SEC = { t: 0, s: 1, m: 60, h: 3600, d: 86400 };
-const CHIPS = { t: [5, 6, 7, 8, 9, 10], s: [15, 30, 45, 60, 90, 120], m: [1, 2, 3, 5, 10, 15], h: [1, 2, 4, 6, 12, 24], d: [1, 2, 3, 5, 7, 14] };
-const DEFLIM = { RF: { t: [5, 10], s: [15, 86400], m: [1, 1440], h: [1, 24] }, HL: { s: [15, 86400], m: [1, 1440], h: [1, 24] }, VN: { m: [1, 1440], h: [1, 24], d: [1, 365] } };
-const MLAB = { RF: ["▲ RISE", "▼ FALL"], HL: ["▲ HIGHER", "▼ LOWER"], MU: ["▲ UP", "▼ DOWN"], VN: ["▲ CALL", "▼ PUT"] };
-const DM = () => O.dm[O.mode] || O.dm.RF;
-const unit = () => DM().u;
-const tickSec = () => /^1HZ/.test(S.sym || "") ? 1 : 2;
-const durSec = () => O.mode === "MU" ? 0 : unit() === "t" ? dur() * tickSec() : dur() * U_SEC[unit()];
-const durTicks = () => O.mode === "MU" ? 10 : Math.max(1, Math.round(durSec() / tickSec()));
-function durLimits(mode, u) { const m = mode === "MU" ? "RF" : mode; return S.specs[S.sym]?.[m]?.[u] || DEFLIM[m]?.[u] || [1, 1000]; }
-function optDesc() {
-    if (O.mode === "MU") return `MULT ×${O.mult}${O.tp > 0 ? ` TP ${money(O.tp)}` : ""}${O.sl > 0 ? ` SL ${money(O.sl)}` : ""}`;
-    const d = `${dur()}${unit()}`;
-    return O.mode === "HL" ? `HL ${d}${S.bar ? ` ±${S.bar.toFixed(dec())}` : ""}` : O.mode === "VN" ? `VANILLA ${d}` : `RF ${d}`;
-}
-
-/* ---- contract specs (best effort: falls back to safe defaults, the server validates every quote) ---- */
-async function loadSpecs(sym) {
-    if (S.specs[sym]?.done) return;
-    const sp = S.specs[sym] = { done: true, mult: null, vnBars: null, RF: {}, HL: {}, VN: {}, has: {}, seen: 0, types: new Set() };
-    try {
-        const r = await specReq(sym);
-        const parse = s => { const m = /^(\d+)([tsmhd])$/.exec(String(s || "")); return m ? { v: +m[1], u: m[2] } : null; };
-        const toSec = x => x.u === "t" ? x.v * tickSec() : x.v * U_SEC[x.u];
-        (r.contracts_for?.available || []).forEach(c => {
-            const cat = c.contract_category, ct = String(c.contract_type || "");
-            sp.seen++; sp.types.add(ct);
-            if (cat === "multiplier" || /^MULT/.test(ct)) { sp.has.MU = true; if (Array.isArray(c.multiplier_range)) sp.mult = c.multiplier_range.map(Number); return; }
-            const hasBar = Number(c.barriers) >= 1 || /non_atm|euro_non/.test(c.barrier_category || "");
-            const key = /^VANILLA/.test(ct) ? "VN" : (ct === "HIGHER" || ct === "LOWER") ? "HL" : ((ct === "CALL" || ct === "PUT") && (cat === "callput" || !cat)) ? (hasBar ? "HL" : "RF") : null;
-            if (!key) return;
-            sp.has[key] = true;
-            if (key === "VN" && Array.isArray(c.barrier_choices)) sp.vnBars = c.barrier_choices.map(String);
-            const a = parse(c.min_contract_duration), b = parse(c.max_contract_duration), rg = sp[key]; if (!a || !b) return;
-            if (a.u === "t") { if (b.u === "t" && key === "RF") rg.t = [Math.min(rg.t?.[0] ?? 1e9, a.v), Math.max(rg.t?.[1] ?? 0, b.v)]; return; }
-            const s0 = toSec(a), s1 = toSec(b);
-            ["s", "m", "h", "d"].forEach(u => { const lo = Math.max(1, Math.ceil(s0 / U_SEC[u])), hi = Math.floor(s1 / U_SEC[u]); if (hi >= lo) rg[u] = [Math.min(rg[u]?.[0] ?? 1e9, lo), Math.max(rg[u]?.[1] ?? 0, hi)]; });
-        });
-        log(`Contract specs ${sym}: modes ${Object.keys(sp.has).join("/") || "?"} · types ${[...sp.types].join(",")}`);
-    } catch (e) { sp.done = false; log(`contracts_for ${sym} unavailable → defaults in use (${e.message})`, "warn"); setTimeout(() => { if (S.specs[sym] && !S.specs[sym].done) delete S.specs[sym]; }, 30000); }
-}
-
-/* ---- v3.2: new-API helpers ---- */
-async function specReq(sym) {          // contracts_for: this gateway validates currency + product_type; fall back to the bare form if it ever stops
-    const full = { contracts_for: sym, currency: S.cur || "USD", product_type: "basic" }, plain = { contracts_for: sym };
-    const order = S.cfFull === false ? [plain, full] : [full, plain]; let err;
-    for (const q of order) {
-        try { const r = await sendWS(Object.assign({}, q), { timeout: 8000, type: "contracts" }); S.cfFull = "product_type" in q; return r; }
-        catch (e) { err = e; if (!/validation|currency|product_type|additional|invalid/i.test(e.message)) throw e; }
-    }
-    throw err;
-}
-const hlType = side => S.hlLegacy ? (side === "RISE" ? "CALL" : "PUT") : (side === "RISE" ? "HIGHER" : "LOWER");
-function riskCap() {
-    const a = SG.maxStakePct > 0 && S.bal > 0 ? S.bal * SG.maxStakePct / 100 : Infinity, b = SG.maxStakeAbs > 0 ? SG.maxStakeAbs : Infinity;
-    return Math.min(a, b, S.bal > 0 ? S.bal * 0.95 : Infinity);
-}
-function quoteFail(side, e, rq) {
-    S.armKey = ""; const msg = String(e.message || ""); S.armFails++;
-    const d = rq ? `${rq.contract_type}${rq.barrier ? " " + rq.barrier : ""} ${rq.duration ? rq.duration + rq.duration_unit : "x" + (rq.multiplier || "")} stake ${rq.amount}` : "";
-    if (S.armFails <= 4) log(`Quote ${side} [${d}] → ${msg}`, "warn");
-    S.quoteBlock = Date.now() + Math.min(30000, 2000 * 2 ** Math.min(S.armFails, 4));       // back-off: never hammer the server
-    const mx = /lower than ([\d.]+)/i.exec(msg), mn = /(?:higher|greater) than ([\d.]+)/i.exec(msg);
-    if (/amount|stake/i.test(msg) && mx) { const v = Math.floor(Number(mx[1]) * 100) / 100; if (v >= 0.35 && v < S.stake) { toast(`Server max stake is ${mx[1]} — stake lowered.`, 4000, "bad"); S.quoteBlock = 0; return void setStake(v); } }
-    if (/amount|stake/i.test(msg) && mn) { const v = Math.ceil(Number(mn[1]) * 100) / 100; if (v > S.stake) { toast(`Server min stake is ${mn[1]} — stake raised.`, 4000, "bad"); S.quoteBlock = 0; return void setStake(v); } }
-    const list = barList(msg);
-    if (list && (O.mode === "HL" || O.mode === "VN")) {
-        const dg = (/\.(\d+)/.exec(list[0]) || [])[1]; if (dg) S.pip[S.sym] = dg.length;
-        if (O.mode === "VN") { (S.specs[S.sym] = S.specs[S.sym] || { done: false, RF: {}, HL: {}, VN: {}, has: {}, seen: 0, types: new Set() }).vnBars = list; renderOpt(); }
-        else { S.barMap = {}; S.barKey = ""; S.barUp = S.barDn = ""; }
-        log(`Learned server barriers: ${list.join(" ")}`); S.quoteBlock = Date.now() + 1500; return;
-    }
-    if (/invalid contract type/i.test(msg) && Date.now() - S.badTypeAt > 2000) {
-        S.badTypeAt = Date.now();
-        if (O.mode === "HL" && !S.hlLegacy) { S.hlLegacy = true; S.quoteBlock = 0; log("HIGHER/LOWER rejected → retrying with CALL/PUT + barrier.", "warn"); return void armSoon(); }
-        if (O.mode === "HL") S.hlLegacy = false;
-        toast(`${rq?.contract_type || "This contract"} is not offered on ${S.sym} — pick another market or mode.`, 5000, "bad"); S.quoteBlock = Date.now() + 60000;
-    }
-}
-function multFallback(sym) {
-    const v = Number((/\d+/.exec(String(sym || "").replace(/^1HZ/, "")) || [100])[0]);
-    const M = { 10: [400, 1000, 2000, 3000, 4000], 25: [160, 400, 800, 1200, 1600], 50: [80, 200, 400, 600, 800], 75: [50, 100, 200, 300, 400], 100: [40, 100, 200, 300, 400] };
-    return M[v] || M[100];
-}
-const multList = () => S.specs[S.sym]?.mult || multFallback(S.sym);
-function fixMult() { const l = gggggggg ggggggggggggggggggggggggggggggggggggggggggggggg multList(); if (!l.includes(O.mult)) { O.mult = l[Math.floor(l.length / 2)]; saveO(); renderOpt(); } }
-function vnBarrier() {
-    const l = S.specs[S.sym]?.vnBars; if (!l || !l.length) return O.vnBar || "+0.00";
-    if (l.includes(O.vnBar)) return O.vnBar;
-    return l.slice().sort((a, b) => Math.abs(parseFloat(a)) - Math.abs(parseFloat(b)))[0];
-}
-
-/* ---- one place that builds every proposal ---- */
-function propReq(side, st) {
-    const up = side === "RISE", b = { proposal: 1, amount: st, basis: "stake", currency: S.cur, underlying_symbol: S.sym };
-    if (O.mode === "MU") {
-        const lo = {}; if (O.tp > 0) lo.take_profit = round2(O.tp); if (O.sl > 0) lo.stop_loss = round2(O.sl);
-        return Object.assign(b, { contract_type: up ? "MULTUP" : "MULTDOWN", multiplier: O.mult }, Object.keys(lo).length ? { limit_order: lo } : {});
-    }
-    Object.assign(b, { duration: dur(), duration_unit: unit() });
-    if (O.mode === "HL") return Object.assign(b, { contract_type: hlType(side), barrier: (up ? S.barUp : S.barDn) || (up ? "+0" : "-0") });
-    if (O.mode === "VN") return Object.assign(b, { contract_type: up ? "VANILLALONGCALL" : "VANILLALONGPUT", barrier: vnBarrier() });
-    return Object.assign(b, { contract_type: RF[side] });
-}
-const qKey = st => `${S.sym}|${st}|${S.cur}|${O.mode}|${O.mode === "MU" ? `${O.mult}|${O.tp}|${O.sl}` : `${unit()}${dur()}|${O.mode === "HL" ? S.barUp + S.barDn : O.mode === "VN" ? vnBarrier() : ""}`}|${RF.RISE}|${S.hlLegacy ? 1 : 0}`;
-function minPayFail(p) {
-    if (O.mode === "RF") return p.ratio < SG.minPayout - 0.005;
-    if (O.mode === "HL" && O.hlMode === "payout") return p.ratio < O.hlPay * 0.9;
-    return false;
-}
-
-/* ---- Higher/Lower barrier from the payout you asked for ---- */
-const barList = msg => { const m = /barriers? available (?:are|is)[:\s]+(.+)/i.exec(msg || ""), l = m ? m[1].match(/[+-]?\d+(?:\.\d+)?/g) : null; return l && l.length ? l.map(s => /^[+-]/.test(s) ? s : "+" + s) : null; };
-async function probe(side, barrier, st) {
-    const r = await sendWS(Object.assign(propReq(side, st), { barrier }), { timeout: 5000, type: "barrier probe" });
-    const ask = Number(r.proposal?.ask_price), pay = Number(r.proposal?.payout);
-    if (!(ask > 0) || !(pay > 0)) throw new Error("probe quote invalid");
-    return pay / ask;
-}
-/* Barrier discovery: probe once; if the server answers with its own barrier list ("Barriers available are …") use that,
-   otherwise walk a ladder of offsets. Every candidate is quoted and the one closest to your target payout wins. */
-async function solveBar(st) {
-    const mode = O.hlMode, tg = O.hlPay, ck = `${S.sym}|${unit()}${dur()}|${mode === "payout" ? tg : O.hlOff}`, hit = S.barMap[ck];
-    if (hit && Date.now() - hit.at < 300000) return hit;
-    const sig = std(deltas(S.ticks.slice(-300))) || 0.01, steps = Math.max(1, durSec() / tickSec()), minB = Math.pow(10, -dec());
-    const seed = mode === "offset" ? Math.max(minB, O.hlOff) : Math.max(minB, sig * Math.sqrt(steps) * 0.6);
-    const fmt = (sg, v) => sg + Math.max(minB, v).toFixed(dec());
-    let list = null, cur = null, lastErr = null;
-    for (const k of [1, 0.5, 2, 0.25, 4, 1.37]) {
-        const off = Math.max(minB, Number((seed * k).toFixed(dec())));
-        try { cur = { off, r: await probe("RISE", fmt("+", off), st) }; break; }
-        catch (e) { lastErr = e; if ((list = barList(e.message))) break; if (!/barrier|minimum|maximum|too |exceed|at least|at most/i.test(e.message)) throw e; }
-    }
-    if (!list && !cur) throw lastErr || new Error("no barrier accepted");
-    let up, dn, r = 0;
-    if (!list) {
-        let best = cur, lo = null, hi = null;
-        for (let i = 0; i < 6 && mode === "payout" && Math.abs(cur.r - tg) / tg >= 0.03; i++) {
-            if (cur.r < tg) lo = cur; else hi = cur;
-            let nx;
-            if (lo && hi && hi.off > lo.off) { const f = (Math.log(tg) - Math.log(lo.r)) / ((Math.log(hi.r) - Math.log(lo.r)) || 1); nx = lo.off + (hi.off - lo.off) * clamp(f, 0.1, 0.9); }
-            else nx = cur.off * clamp(Math.pow(tg / cur.r, 1.4), 0.4, 2.5);
-            nx = Math.max(minB, Number(nx.toFixed(dec()))); if (nx === cur.off) break;
-            try { const rr = await probe("RISE", fmt("+", nx), st); cur = { off: nx, r: rr }; if (Math.abs(rr - tg) < Math.abs(best.r - tg)) best = cur; }
-            catch (e) { list = barList(e.message); break; }
-        }
-        if (!list) {
-            up = fmt("+", best.off); dn = fmt("-", best.off); r = best.r;
-            try { await probe("FALL", dn, st); } catch (e) { if (!(list = barList(e.message))) throw e; }   // the LOWER side must be valid too
-        }
-    }
-    if (list) {
-        const dg = (/\.(\d+)/.exec(list[0]) || [])[1]; if (dg) S.pip[S.sym] = dg.length;
-        const ups = list.filter(x => parseFloat(x) > 0), dns = list.filter(x => parseFloat(x) < 0);
-        if (!ups.length || !dns.length) throw new Error("server offered no usable barriers");
-        if (mode === "offset") {
-            const near = a => a.slice().sort((x, y) => Math.abs(Math.abs(parseFloat(x)) - O.hlOff) - Math.abs(Math.abs(parseFloat(y)) - O.hlOff))[0];
-            up = near(ups); dn = near(dns); r = 0;
-        } else {
-            const pick = async (arr, side) => {
-                const rs = (await Promise.all(arr.map(b => probe(side, b, st).then(x => ({ b, r: x }), () => null)))).filter(Boolean);
-                if (!rs.length) throw new Error("no quotable barrier");
-                return rs.sort((x, y) => Math.abs(x.r - tg) - Math.abs(y.r - tg))[0];
-            };
-            const [u, d] = await Promise.all([pick(ups, "RISE"), pick(dns, "FALL")]);
-            up = u.b; dn = d.b; r = (u.r + d.r) / 2;
-        }
-    }
-    const out = { up, dn, r, at: Date.now() }; S.barMap[ck] = out;
-    log(`Barriers ${S.sym}: ${out.up} / ${out.dn}${out.r ? ` → ≈${out.r.toFixed(2)}x (target ${tg}x)` : ""}`);
-    return out;
-}
-async function ensureBar(st) {
-    if (O.mode !== "HL") return;
-    const key = `${S.sym}|${unit()}${dur()}|${O.hlMode}|${O.hlPay}|${O.hlOff}`;
-    if (S.barKey !== key || !S.barUp) { const b = await solveBar(st); S.barUp = b.up; S.barDn = b.dn; S.bar = Math.abs(parseFloat(b.up)); S.barKey = key; }
-    set("oBarRead", `${S.barUp} / ${S.barDn}`);
-}
-
-/* ---- timeframe candles carrying their own EMA / Supertrend / StochRSI ---- */
-function rebuildCS() {
-    const tf = TFS[V.tf]; S.cs = []; if (!tf || !S.ticks.length) return;
-    let cur = null;
-    for (const t of S.ticks) {
-        const b = Math.floor(t.e / tf) * tf;
-        if (!cur || cur.e !== b) { cur = { e: b, q: t.q, o: t.q, h: t.q, l: t.q }; S.cs.push(cur); }
-        else { cur.q = t.q; if (t.q > cur.h) cur.h = t.q; if (t.q < cur.l) cur.l = t.q; }
-    }
-    buildInd(S.cs);
-}
-function updateCS(t) {
-    const tf = TFS[V.tf]; if (!tf) return;
-    const C = S.cs, b = Math.floor(t.e / tf) * tf, last = C[C.length - 1];
-    if (last && last.e === b) { last.q = t.q; if (t.q > last.h) last.h = t.q; if (t.q < last.l) last.l = t.q; }
-    else { C.push({ e: b, q: t.q, o: t.q, h: t.q, l: t.q }); if (C.length > MAX_TICKS) C.shift(); }
-    calcInd(C, C.length - 1);
-}
-
-/* ---- trade-option panel (under the chart) ---- */
-function renderOpt() {
-    const el = $("optRow"); if (!el) return;
-    document.querySelectorAll("#modeBtns [data-m]").forEach(b => b.classList.toggle("on", b.dataset.m === O.mode));
-    const u = unit(), [a, b] = durLimits(O.mode, u), d = dur();
-    const seg = `<div class="useg">${(UNITS[O.mode] || []).map(x => `<button data-u="${x}" class="${x === u ? "on" : ""}" title="${UL[x]}">${x}</button>`).join("")}</div>`;
-    const chips = `<div class="chips">${CHIPS[u].filter(v => v >= a && v <= b).map(v => `<button data-d="${v}" class="${v === d ? "on" : ""}">${v}</button>`).join("")}<input type="number" id="oDur" min="${a}" max="${b}" value="${d}" title="Duration in ${UL[u]}"></div>`;
-    let h = "";
-    if (O.mode === "RF") h = seg + chips;
-    else if (O.mode === "HL") {
-        h = seg + chips + `<label>Barrier<select id="oHlMode"><option value="payout"${O.hlMode === "payout" ? " selected" : ""}>by payout</option><option value="offset"${O.hlMode === "offset" ? " selected" : ""}>fixed offset</option></select></label>`
-          + (O.hlMode === "payout" ? `<label>Payout ×<input type="number" id="oHlPay" min="1.1" max="50" step="0.1" value="${O.hlPay}"></label>` : `<label>Offset<input type="number" id="oHlOff" min="0" step="any" value="${O.hlOff}"></label>`)
-          + `<span class="tag" id="oBarRead">${S.barUp ? `${S.barUp} / ${S.barDn}` : "—"}</span>`;
-    } else if (O.mode === "MU") {
-        const l = multList();
-        h = `<label>Multiplier<select id="oMult">${l.map(v => `<option value="${v}"${v === O.mult ? " selected" : ""}>×${v}</option>`).join("")}</select></label>`
-          + `<label>TP $<input type="number" id="oTp" min="0" step="0.01" placeholder="off" value="${O.tp || ""}"></label><label>SL $<input type="number" id="oSl" min="0" step="0.01" placeholder="off" value="${O.sl || ""}"></label>`;
-    } else {
-        const l = S.specs[S.sym]?.vnBars || [], cur = vnBarrier();
-        h = seg + chips + (l.length ? `<label>Strike<select id="oVn">${l.map(v => `<option${v === cur ? " selected" : ""}>${v}</option>`).join("")}</select></label>` : `<span class="tag">strike: auto</span>`);
-    }
-    el.innerHTML = h;
-}
-function optChanged() { S.barKey = ""; S.barBlock = 0; S.quoteBlock = 0; saveO(); disarm(); renderOpt(); ui(); armSoon(150); reeval(); }
-function setDur(v) { const [a, b] = durLimits(O.mode, unit()); DM().v = clamp(Math.floor(num(v, a)), a, b); optChanged(); }
-function setUnit(u) { const [a, b] = durLimits(O.mode, u); DM().u = u; DM().v = CHIPS[u].find(v => v >= a && v <= b) || a; optChanged(); }
-function setMode(m) {
-    if (m === O.mode) return;
-    if (inTrade() || S.busy) return void toast("Locked while a trade is active.", 2000, "bad");
-    if (SG.auto) autoOff("TRADE OPTION CHANGED — set its values, then re-enable AUTO");
-    O.mode = m; S.bar = 0; optChanged();
-    if (m === "VN" && S.exec === "PAPER") toast("Vanillas have no paper mode — use LIVE on a demo account.", 3500, "bad");
-}
-function wireOpt() {
-    $("modeBtns").addEventListener("click", ev => { const b = ev.target.closest("[data-m]"); if (b) setMode(b.dataset.m); });
-    const oe = $("optRow");
-    oe.addEventListener("click", ev => {
-        const u = ev.target.closest("[data-u]"); if (u) return setUnit(u.dataset.u);
-        const d = ev.target.closest("[data-d]"); if (d) setDur(Number(d.dataset.d));
-    });
-    oe.addEventListener("change", ev => {
-        const e = ev.target;
-        switch (e.id) {
-            case "oDur": return setDur(e.value);
-            case "oHlMode": O.hlMode = e.value; break;
-            case "oHlPay": O.hlPay = clamp(num(e.value, 2.5), 1.1, 50); break;
-            case "oHlOff": O.hlOff = Math.max(0, num(e.value, 0.5)); break;
-            case "oMult": O.mult = Number(e.value); break;
-            case "oTp": O.tp = Math.max(0, num(e.value, 0)); break;
-            case "oSl": O.sl = Math.max(0, num(e.value, 0)); break;
-            case "oVn": O.vnBar = e.value; break;
-            default: return;
-        }
-        optChanged();
-    });
-    $("amChip").addEventListener("click", () => setAM(!AM.on));
-    $("tcClose").addEventListener("click", sellNow);
-    renderOpt();
-}
-
-/* ---- entry trigger presets ---- */
-function applyTrig(v) {
-    SG.trig = v; const R = SG.req;
-    if (v === "XCROSS") { Object.assign(R, { t5: 0, t1: 0, cross: 0, srsi: 0, st: 0, xc: 1, zone: 0, zt: 0, vol: 1, chop: 0 }); SG.minQ = 0; }
-    else if (v === "ZONE") {
-        if (!P.zOn) { P.zOn = true; applyParams(); }
-        if (SG.zMode === "OFF") SG.zMode = "BOTH";
-        Object.assign(R, { t5: 1, t1: 0, cross: 0, srsi: 0, st: 0, xc: 0, zone: 0, zt: 1, vol: 1, chop: 0 }); SG.minQ = 0;
-    } else return applyPreset(PRESETS[SG.preset] ? SG.preset : "BALANCED");
-    SG.preset = "CUSTOM"; sgChanged(false);
-}
-
-/* ---- market auto-select ---- */
-function setAM(on) {
-    AM.on = on; saveAM(); S.amNext = 0; S.amOut = 0; ui(); syncPSig();
-    log(`Market auto-select ${on ? `ON · ${AMCAT[AM.cat].n} ${AMCAT[AM.cat].r.join("–")}%` : "OFF"}`, on ? "trade" : "info");
-    toast(`Market auto-select ${on ? "ON" : "OFF"}`, 1800, on ? "ok" : "");
-}
-async function autoSelect(why) {
-    if (!AM.on || !ready() || inTrade() || S.busy || S.switching || S.scanning || S.amBusy) return;
-    S.amBusy = true;
-    try {
-        await scan(`auto-select · ${why}`);
-        if (!AM.on || inTrade() || S.busy) return;
-        const [a, b] = AMCAT[AM.cat].r, pool = S.rank.filter(r => r.score >= a && r.score <= b);
-        S.amNext = Date.now() + AM.every * 1000;
-        if (!pool.length) { log(`Auto-select: nothing in ${AMCAT[AM.cat].n} (${a}–${b}%) — staying on ${S.sym}.`, "warn"); return; }
-        const pick = pool.find(r => r.sym === S.sym) || pool[0];
-        if (pick.sym !== S.sym) { log(`Auto-select → ${pick.sym} (score ${pick.score})`, "trade"); toast(`Market → ${pick.sym} · Q ${pick.score}`, 2200, "ok"); await useMarket(pick.sym); }
-    } finally { S.amBusy = false; }
-}
-function amTick() {
-    if (!AM.on || !ready() || inTrade() || S.busy || S.switching || S.scanning || S.amBusy || S.unconfirmedUntil) return;
-    const now = Date.now();
-    if (now >= S.amNext) return void autoSelect("timer");
-    const sc = S.res?.score, [a, b] = AMCAT[AM.cat].r;
-    if (sc != null && (sc < a || sc > b)) { S.amOut = S.amOut || now; if (now - S.amOut > 30000 && now - S.rankAt > 45000) { S.amOut = 0; autoSelect("conditions changed"); } }
-    else S.amOut = 0;
-}
-
 async function boot() {
     wire(); ui(); contractUI(true); renderTrades(); renderHud(); link("off"); redraw();
-    set("ver", "v3.2"); setInterval(amTick, 4000);
+    set("ver", "v3.1");
+    setInterval(() => { if (inTrade()) contractUI(); }, 1000); setInterval(watchConditions, 5000);
     log("PSYCHIC WINNER Manual Pro ready. PAPER by default — switch to LIVE when you are ready.");
     log("Keys: R / ↑ = RISE · F / ↓ = FALL · M = full screen · Esc = cancel / close.");
     await oauthCallback();
