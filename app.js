@@ -1,5 +1,5 @@
 /* ================================================================
-   PSYCHIC WINNER — MANUAL PRO  |  v3.0
+   PSYCHIC WINNER — MANUAL PRO  |  v3.1
    Chart-first manual terminal for 5-tick Rise/Fall.
    Entry tools (all computed on the TICK stream the contract settles on):
      EMA 21 cross · supply/demand zones · Stochastic RSI timing · Supertrend side
@@ -36,8 +36,8 @@ const TFS = { TICK: 0, "5S": 5, "15S": 15, "30S": 30, "1M": 60, "5M": 300 };
 const SPAN = { TICK: 120, "5S": 420, "15S": 1200, "30S": 2400, "1M": 4800, "5M": 12000 };
 let RF = { RISE: "CALL", FALL: "PUT" };   // verified against the proposal longcode and auto-corrected
 
-const FACT = [["t5", "5M"], ["t1", "1M"], ["cross", "EMA"], ["srsi", "SRSI"], ["st", "ST"], ["zone", "ZONE"], ["vol", "VOL"], ["chop", "CHOP"]];
-const FACT_NAME = { t5: "5-minute trend", t1: "1-minute confirms", cross: "EMA cross", srsi: "StochRSI turn", st: "Supertrend agrees", zone: "Zone room", vol: "Volatility band", chop: "Not choppy" };
+const FACT = [["t5", "5M"], ["t1", "1M"], ["cross", "EMA"], ["srsi", "SRSI"], ["st", "ST"], ["xc", "X-CROSS"], ["zone", "ZONE"], ["zt", "Z-TRIG"], ["vol", "VOL"], ["chop", "CHOP"]];
+const FACT_NAME = { t5: "5-minute trend", t1: "1-minute confirms", cross: "EMA cross", srsi: "StochRSI turn", st: "Supertrend agrees", xc: "EMA + ST double cross", zt: "Zone trigger", zone: "Zone room", vol: "Volatility band", chop: "Not choppy" };
 
 /* ---------- PERSISTENCE ---------- */
 const ls = {
@@ -55,8 +55,9 @@ const PRESETS = {
     BALANCED: { req: { t5: 1, t1: 1, cross: 1, srsi: 0, st: 0, zone: 1, vol: 1, chop: 1 }, z5Min: 1, z1Min: 0.5, holdMin: 3, crossMin: 0.15, crossWin: 2, maxFlips: 3, volCap: 1.8, volMin: 0.5, zoneRoom: 1, srLow: 30, minQ: 55 },
     FAST: { req: { t5: 1, t1: 0, cross: 1, srsi: 0, st: 0, zone: 0, vol: 1, chop: 0 }, z5Min: 0.8, z1Min: 0.3, holdMin: 2, crossMin: 0.1, crossWin: 3, maxFlips: 4, volCap: 2.2, volMin: 0.4, zoneRoom: 0.8, srLow: 35, minQ: 0 }
 };
-const SIGKEYS = ["z5Min", "z1Min", "holdMin", "crossMin", "crossWin", "maxFlips", "volCap", "volMin", "zoneRoom", "srLow", "minQ"];
-const SG = Object.assign({ preset: "BALANCED", ...clone(PRESETS.BALANCED), auto: false, sound: true, cooldown: 10, maxTrades: 0, takeProfit: 20, maxLoss: -20, minPayout: 1.8 }, ls.get("pw3-sg", {}));
+Object.values(PRESETS).forEach(p => { p.req.xc = 0; p.req.zt = 0; });
+const SIGKEYS = ["xWin", "z5Min", "z1Min", "holdMin", "crossMin", "crossWin", "maxFlips", "volCap", "volMin", "zoneRoom", "srLow", "minQ"];
+const SG = Object.assign({ preset: "BALANCED", ...clone(PRESETS.BALANCED), auto: false, sound: true, trig: "CONF", rev: false, xWin: 12, zMode: "BOTH", cooldown: 10, maxTrades: 0, takeProfit: 20, maxLoss: -20, minPayout: 1.8 }, ls.get("pw3-sg", {}));
 SG.req = Object.assign({}, PRESETS.BALANCED.req, SG.req); SG.auto = false;      // auto always starts OFF
 
 /* ---------- STATE ---------- */
@@ -69,7 +70,7 @@ const S = {
     contract: null, paper: null, subCon: null, unconfirmedUntil: 0,
     rank: [], rankAt: 0, scanning: false, switching: false, want: null, busy: false, cool: 0, lastTick: 0, staleHits: 0,
     stake: Math.max(0.35, Number(ls.get("pw3-stake", 0.35)) || 0.35), dur: Math.min(10, Math.max(5, Number(ls.get("pw3-dur", 5)) || 5)),
-    pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, ratio: 1.9, marks: [], hist: [], res: null, zones: [], zN: 0, sigOk: false, sigCool: 0, execMs: null
+    pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, ratio: 1.9, marks: [], hist: [], res: null, zones: [], zN: 0, sigOk: false, sigCool: 0, execMs: null, specs: {}, bar: 0, barKey: "", barMap: {}, cs: [], tn: 0, zmem: [], zev: null, amNext: 0, amBusy: false, amOut: 0
 };
 const V = { tf: "TICK", span: SPAN.TICK, off: 0, ys: 1, cx: null, ema: true, zones: true, sr: true, st: true };   // chart view
 const D = { tool: "cursor", items: ls.get("pw3-draw", {}), tmp: null };                                           // drawings
@@ -88,7 +89,7 @@ const wsOpen = () => Boolean(S.ws && S.ws.readyState === WebSocket.OPEN);
 const ready = () => S.authed && wsOpen();
 const inTrade = () => Boolean(S.contract || S.paper);
 const stake = () => Math.max(0.35, round2(S.stake));
-const dur = () => clamp(Math.floor(S.dur), 5, 10);
+const dur = () => { const [a, b] = durLimits(O.mode, DM().u); return clamp(Math.floor(num(DM().v, a)), a, b); };
 const std = a => {
     if (a.length < 2) return 0;
     const m = a.reduce((s, x) => s + x, 0) / a.length;
@@ -274,7 +275,7 @@ function findZones(T) {
     return [...pick("S"), ...pick("D")];
 }
 function zoneCheck(Z, dir, p, sig) {
-    const need = sig * Math.sqrt(dur()) * SG.zoneRoom;
+    const need = sig * Math.sqrt(durTicks()) * SG.zoneRoom;
     const inDem = Z.some(z => z.t === "D" && p >= z.lo && p <= z.hi), inSup = Z.some(z => z.t === "S" && p >= z.lo && p <= z.hi);
     const side = dir > 0 ? "S" : "D";
     if (dir > 0 ? inSup : inDem) return { ok: false, txt: dir > 0 ? "in supply" : "in demand", d: 0 };
@@ -284,46 +285,86 @@ function zoneCheck(Z, dir, p, sig) {
     const bonus = dir > 0 ? inDem : inSup;
     return { ok: true, bonus, txt: bonus ? (dir > 0 ? "in demand ✓" : "in supply ✓") : d === Infinity ? "clear" : `room ${(d / sig).toFixed(0)}σ`, d };
 }
-function analyze(T, Z) {
+function dualCross(C, win) {            // price crosses EMA *and* Supertrend the same way within `win` bars
+    const L = C.length - 1; if (L < win + 3) return null;
+    let ce = -1, cd = 0, cs = -1, sd = 0;
+    for (let i = 0; i <= win && i + 1 <= L; i++) {
+        const a = C[L - i], b = C[L - i - 1];
+        if (ce < 0 && (a.q > a.m) !== (b.q > b.m)) { ce = i; cd = a.q > a.m ? 1 : -1; }
+        if (cs < 0 && a.sdir !== b.sdir) { cs = i; sd = a.sdir; }
+    }
+    if (ce < 0 || cs < 0 || cd !== sd) return null;
+    const c = C[L]; if ((c.q > c.m ? 1 : -1) !== cd || c.sdir !== cd) return null;
+    return { dir: cd, age: Math.max(ce, cs) };
+}
+function memZones(zs) {
+    zs.forEach(z => {
+        const k = z.t + z.e0, m = S.zmem.find(x => x.k === k);
+        if (m) { m.hi = z.hi; m.lo = z.lo; m.seen = S.tn; } else S.zmem.push({ k, t: z.t, hi: z.hi, lo: z.lo, seen: S.tn, cool: 0, dead: false });
+    });
+    S.zmem = S.zmem.filter(z => S.tn - z.seen < 400).slice(-16);
+}
+function zoneScan(pq, q) {             // fresh zone events: TOUCH (enter a zone) / BREAK (pierce it)
+    if (!P.zOn || SG.zMode === "OFF" || !S.zmem.length) return;
+    const tch = SG.zMode === "TOUCH" || SG.zMode === "BOTH", brk = SG.zMode === "BREAK" || SG.zMode === "BOTH";
+    for (const z of S.zmem) {
+        if (z.dead || S.tn < z.cool) continue;
+        let ev = null;
+        if (z.t === "D") {
+            if (brk && pq >= z.lo && q < z.lo) ev = { dir: -1, k: "break demand" };
+            else if (tch && pq > z.hi && q <= z.hi) ev = { dir: 1, k: "touch demand" };
+        } else {
+            if (brk && pq <= z.hi && q > z.hi) ev = { dir: 1, k: "break supply" };
+            else if (tch && pq < z.lo && q >= z.lo) ev = { dir: -1, k: "touch supply" };
+        }
+        if (ev) { S.zev = { dir: ev.dir, k: ev.k, n: S.tn }; z.cool = S.tn + 15; if (ev.k.startsWith("break")) z.dead = true; }
+    }
+}
+function analyze(T, Z, C = T, live = true) {
     const n = T.length; if (n < 70) return null;
     const f5 = frameStats(T, 300), f1 = frameStats(T, 60); if (!f5 || !f1) return null;
     const Dl = deltas(T.slice(-130)), sig = std(Dl.slice(-60)); if (!sig) return null;
     const vol = std(Dl.slice(-20)) / (std(Dl) || 1);
-    const dir = f5.z >= 0 ? 1 : -1, L = n - 1;
-    const q = i => T[L - i].q, m = i => T[L - i].m, side = i => dir * (q(i) - m(i)), K = i => T[L - i].k, Dd = i => T[L - i].dd;
-    // EMA cross in trend direction within the last crossWin ticks
+    const cw = C === T || C.length >= 30, L = C.length - 1;               // cw: enough bars on the viewed timeframe
+    const sigC = C === T ? sig : (std(deltas(C.slice(-60))) || sig);
+    const xc = cw ? dualCross(C, SG.xWin) : null;
+    const zev = live && S.zev && S.tn - S.zev.n <= 3 ? S.zev : null;
+    const a5 = f5.z >= 0 ? 1 : -1, dir = SG.trig === "XCROSS" && xc ? xc.dir : a5;
+    const q = i => C[L - i].q, m = i => C[L - i].m, side = i => dir * (q(i) - m(i)), K = i => C[L - i].k, Dd = i => C[L - i].dd;
     let age = -1;
     for (let i = 0; i < SG.crossWin && i + 1 <= L; i++) if (side(i) > 0 && side(i + 1) <= 0) { age = i; break; }
     let hold = 0; if (age >= 0) for (let i = age + 1; i <= age + 12 && i <= L; i++) { if (side(i) <= 0) hold++; else break; }
     const strength = side(0), slope = dir * (m(0) - m(Math.min(5, L))), crossed = age >= 0 && side(0) > 0;
     let flips = 0; for (let i = 0; i < 30 && i + 1 <= L; i++) if ((q(i) > m(i)) !== (q(i + 1) > m(i + 1))) flips++;
-    // Stochastic RSI: %K turns through %D in trend direction after a pullback into the low/high zone
     let ext = dir > 0 ? 100 : 0, turn = false;
     for (let i = 0; i <= 10 && i <= L; i++) ext = dir > 0 ? Math.min(ext, K(i)) : Math.max(ext, K(i));
     for (let i = 0; i < 4 && i + 1 <= L; i++) if (dir * (K(i) - Dd(i)) > 0 && dir * (K(i + 1) - Dd(i + 1)) <= 0) { turn = true; break; }
-    const inZone = dir > 0 ? ext <= SG.srLow : ext >= 100 - SG.srLow, srOk = turn && inZone;
-    const stOk = T[L].sdir === dir;
-    const zc = P.zOn ? zoneCheck(Z, dir, q(0), sig) : { ok: true, txt: "off" };
+    const inZone = dir > 0 ? ext <= SG.srLow : ext >= 100 - SG.srLow, srOk = cw && turn && inZone;
+    const stOk = cw && C[L].sdir === dir;
+    const zc = P.zOn ? zoneCheck(Z, dir, T[n - 1].q, sig) : { ok: true, txt: "off" };
     const volOk = vol <= SG.volCap && vol >= SG.volMin;
-    const z5 = Math.abs(f5.z), t1ok = Math.sign(f1.z) === dir;
+    const z5 = Math.abs(f5.z), t1ok = Math.sign(f1.z) === dir, xOk = Boolean(xc && xc.dir === dir), zOk = Boolean(zev && zev.dir === dir);
     const rows = [
-        { id: "t5", pass: z5 >= SG.z5Min, val: `${f5.z >= 0 ? "▲" : "▼"} z ${f5.z.toFixed(2)}`, w: 0.22, c: Math.min(z5 / 2.5, 1) },
+        { id: "t5", pass: a5 === dir && z5 >= SG.z5Min, val: `${f5.z >= 0 ? "▲" : "▼"} z ${f5.z.toFixed(2)}`, w: 0.22, c: a5 === dir ? Math.min(z5 / 2.5, 1) : 0 },
         { id: "t1", pass: t1ok && Math.abs(f1.z) >= SG.z1Min, val: `z ${f1.z.toFixed(2)}`, w: 0.12, c: t1ok ? Math.min(Math.abs(f1.z) / 1.5, 1) : 0 },
         {
-            id: "cross", pass: crossed && hold >= SG.holdMin && strength >= SG.crossMin * sig && slope >= 0,
-            val: crossed ? `${age}t ago · ${hold}t ${dir > 0 ? "below" : "above"}` : side(0) > 0 ? "riding EMA" : "pullback", w: 0.18,
-            c: crossed ? Math.min(1, 0.6 + strength / (sig * 0.8) * 0.4) : side(0) > 0 ? 0.45 : side(0) > -3 * sig ? 0.55 : 0.2
+            id: "cross", pass: cw && crossed && hold >= SG.holdMin && strength >= SG.crossMin * sigC && slope >= 0,
+            val: crossed ? `${age}b ago · ${hold}b ${dir > 0 ? "below" : "above"}` : side(0) > 0 ? "riding EMA" : "pullback", w: 0.18,
+            c: crossed ? Math.min(1, 0.6 + strength / (sigC * 0.8) * 0.4) : side(0) > 0 ? 0.45 : side(0) > -3 * sigC ? 0.55 : 0.2
         },
         { id: "srsi", off: !P.srOn, pass: !P.srOn || srOk, val: P.srOn ? `K ${K(0).toFixed(0)}` : "off", w: 0.12, c: srOk ? 1 : inZone ? 0.55 : 0.25 },
-        { id: "st", off: !P.stOn, pass: !P.stOn || stOk, val: P.stOn ? (T[L].sdir > 0 ? "▲ up" : "▼ down") : "off", w: 0.08, c: stOk ? 1 : 0 },
+        { id: "st", off: !P.stOn, pass: !P.stOn || stOk, val: P.stOn ? (C[L].sdir > 0 ? "▲ up" : "▼ down") : "off", w: 0.08, c: stOk ? 1 : 0 },
+        { id: "xc", off: !(SG.req.xc || SG.trig === "XCROSS"), pass: xOk, val: xc ? `${xc.dir > 0 ? "▲" : "▼"} ${xc.age}b ago` : "none", w: 0.12, c: xOk ? 1 : 0 },
         { id: "zone", off: !P.zOn, pass: zc.ok, val: zc.txt, w: 0.12, c: zc.ok ? (zc.bonus ? 1 : 0.7) : 0 },
+        { id: "zt", off: !P.zOn || !(SG.req.zt || SG.trig === "ZONE"), pass: zOk, val: zev ? zev.k : "none", w: 0.12, c: zOk ? 1 : 0 },
         { id: "vol", pass: volOk, val: vol.toFixed(2), w: 0.08, c: volOk ? (vol >= 0.7 && vol <= 1.4 ? 1 : 0.6) : 0 },
         { id: "chop", pass: flips <= SG.maxFlips, val: `${flips} flips`, w: 0.08, c: flips <= 1 ? 1 : flips <= SG.maxFlips ? 0.6 : 0 }
     ];
     let sw = 0, sc = 0; rows.forEach(r => { if (!r.off) { sw += r.w; sc += r.w * r.c; } });
     const score = Math.round(100 * sc / (sw || 1)), act = rows.filter(r => !r.off);
-    const ok = act.every(r => !SG.req[r.id] || r.pass) && score >= SG.minQ;
-    return { dir, f5, f1, sig, vol, rows, score, ok, passed: act.filter(r => r.pass).length, total: act.length, crossed, flips, k: K(0), dd: Dd(0), sdir: T[L].sdir, zoneTxt: zc.txt, zoneOk: zc.ok };
+    const need = r => SG.req[r.id] || (r.id === "xc" && SG.trig === "XCROSS") || (r.id === "zt" && SG.trig === "ZONE");
+    const ok = !(SG.trig === "ZONE" && !P.zOn) && act.every(r => !need(r) || r.pass) && score >= SG.minQ;
+    return { dir, f5, f1, sig, vol, rows, score, ok, passed: act.filter(r => r.pass).length, total: act.length, crossed, flips, k: K(0), dd: Dd(0), sdir: C[L].sdir, zoneTxt: zc.txt, zoneOk: zc.ok, xc, zev };
 }
 
 /* ================================================================
@@ -392,7 +433,7 @@ async function loadMarket(sym, force) {
     buildInd(T);
     S.ticks = T; S.sym = sym; S.marks = []; S.res = null; S.zN = 0; S.sigOk = false; D.tmp = null; V.off = 0;
     S.zones = P.zOn ? findZones(T) : [];
-    S.res = analyze(T, S.zones);
+    S.zmem = []; S.zev = null; rebuildCS(); memZones(S.zones); S.res = analyze(T, S.zones, TFS[V.tf] ? S.cs : undefined);
     ls.set("pw3-sym", sym);
     set("symName", `${sym} · ${NAMES[sym]}`);
     try {
@@ -400,6 +441,7 @@ async function loadMarket(sym, force) {
         const id = r?.subscription?.id || null;
         if (g !== S.gen) { await forget(id); return false; }
         S.subTick = id; log(`Streaming ${sym} (${T.length} ticks loaded)`);
+        loadSpecs(sym).then(() => { if (S.sym === sym) { renderOpt(); armSoon(); } }).catch(() => { });
         renderRank(); renderHud(); redraw();
         return true;
     } catch (e) { log(`Tick subscription failed → ${e.message}`, "error"); return false; }
@@ -411,11 +453,12 @@ function onTick(m) {
     if (!Number.isFinite(q) || !Number.isFinite(e)) return;
     const T = S.ticks, last = T[T.length - 1];
     if (last && e <= last.e) return;
-    T.push({ q, e }); calcInd(T, T.length - 1);
+    const pq = last ? last.q : q; T.push({ q, e }); calcInd(T, T.length - 1); S.tn++; updateCS(T[T.length - 1]);
     if (T.length > MAX_TICKS) T.shift();
     S.lastTick = Date.now(); S.staleHits = 0;
-    if (P.zOn && ++S.zN % 5 === 1) S.zones = findZones(T);
-    S.res = analyze(T.length > 900 ? T.slice(-900) : T, S.zones);
+    if (P.zOn && ++S.zN % 5 === 1) { S.zones = findZones(T); memZones(S.zones); }
+    zoneScan(pq, q);
+    S.res = analyze(T.length > 900 ? T.slice(-900) : T, S.zones, TFS[V.tf] ? S.cs : undefined);
     if (S.paper) paperTick(q, e);
     checkSignal(S.res);
     renderHud(); redraw();
@@ -433,7 +476,7 @@ async function scan(reason = "manual") {
                 const s = SYMS[i++];
                 try {
                     const T = await fetchHistory(s, 2, 600); buildInd(T);
-                    const a = analyze(T, P.zOn ? findZones(T) : []);
+                    const a = analyze(T, P.zOn ? findZones(T) : [], undefined, false);
                     if (a) out.push({ sym: s, bias: a.dir > 0 ? "RISE" : "FALL", z5: a.f5.z, z1: a.f1.z, vol: a.vol, flips: a.flips, sdir: a.sdir, k: a.k, zone: a.zoneTxt, zoneOk: a.zoneOk, score: a.score, sigma: a.sig });
                 } catch (e) { log(`${s} history failed → ${e.message}`, "warn"); }
             }
@@ -503,10 +546,10 @@ function onProposal(m) {
     if (!p || !pt || pt.g !== S.pgen) return;
     const side = pt.side;
     if (side !== "RISE" && side !== "FALL") return;
-    if (sideMatches(p.longcode, side) === false) return void fixRF();
+    if ((O.mode === "RF" || O.mode === "HL") && sideMatches(p.longcode, side) === false) return void fixRF();
     const ask = Number(p.ask_price), payout = Number(p.payout);
-    if (!p.id || !(ask > 0) || !(payout > 0)) return;
-    S.pp[side] = { id: String(p.id), ask, payout, ratio: payout / ask, at: Date.now(), stake: num(m.echo_req.amount), dir: side };
+    if (!p.id || !(ask > 0) || ((O.mode === "RF" || O.mode === "HL") && !(payout > 0))) return;
+    S.pp[side] = { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : NaN, at: Date.now(), stake: num(m.echo_req.amount), dir: side };
     manualUI();
 }
 const fresh = (dir, st) => { const p = S.pp[dir]; return p && Math.abs(p.stake - st) < 0.001 && Date.now() - p.at < QUOTE_TTL ? p : null; };
@@ -517,18 +560,22 @@ async function disarm() {
     await Promise.all(subs.map(forget));
 }
 async function syncArm() {
-    const want = ready() && S.sym && S.subTick && !inTrade() && !S.busy && !S.switching;
-    if (!want) { if (S.armKey || Object.keys(S.ppSub).length) await disarm(); manualUI(); return; }
-    const st = stake(), key = `${S.sym}|${st}|${dur()}|${S.cur}|${RF.RISE}`;
+    const can = () => ready() && S.sym && S.subTick && !inTrade() && !S.busy && !S.switching;
+    if (!can()) { if (S.armKey || Object.keys(S.ppSub).length) await disarm(); manualUI(); return; }
+    const st = stake();
+    if (O.mode === "MU") fixMult();
+    if (O.mode === "HL") {
+        try { await ensureBar(st); S.armFails = 0; }
+        catch (e) { if (S.armFails++ < 3) { log(`Barrier solve failed → ${e.message}`, "warn"); toast(`Barrier: ${e.message}`, 3000, "bad"); } manualUI(); return; }
+        if (!can()) return;
+    }
+    const key = qKey(st);
     if (key === S.armKey) return;
     await disarm();
-    S.armKey = key; const g = ++S.pgen, sym = S.sym;
+    S.armKey = key; const g = ++S.pgen;
     await Promise.all(["RISE", "FALL"].map(async side => {
         try {
-            const r = await sendWS({
-                proposal: 1, amount: st, basis: "stake", contract_type: RF[side], currency: S.cur, duration: dur(), duration_unit: "t",
-                underlying_symbol: sym, subscribe: 1, passthrough: { side, g }
-            }, { timeout: 7000, type: "quote" });
+            const r = await sendWS(Object.assign(propReq(side, st), { subscribe: 1, passthrough: { side, g } }), { timeout: 7000, type: "quote" });
             const id = r.subscription?.id || null;
             if (g !== S.pgen) return void (await forget(id));
             S.ppSub[side] = id; S.armFails = 0;
@@ -539,20 +586,20 @@ async function syncArm() {
     manualUI();
 }
 async function oneShot(dir, st, retry = true) {          // fallback: single quote when no fresh pre-armed one exists
-    const r = await sendWS({
-        proposal: 1, amount: st, basis: "stake", contract_type: RF[dir], currency: S.cur, duration: dur(), duration_unit: "t", underlying_symbol: S.sym
-    }, { timeout: 5000, type: "quote" });
+    if (O.mode === "HL") await ensureBar(st);
+    const r = await sendWS(propReq(dir, st), { timeout: 5000, type: "quote" });
     const p = r.proposal;
     if (!p?.id) throw new Error("Proposal ID missing.");
-    if (sideMatches(p.longcode, dir) === false) {              // safety: never trade the opposite side
+    const rfhl = O.mode === "RF" || O.mode === "HL";
+    if (rfhl && sideMatches(p.longcode, dir) === false) {              // safety: never trade the opposite side
         if (!retry) throw new Error("Contract side does not match the signal.");
         S.rfFixed = true; RF = { RISE: RF.FALL, FALL: RF.RISE };
         log(`Rise/Fall mapping corrected → RISE=${RF.RISE}, FALL=${RF.FALL}`, "warn");
         return oneShot(dir, st, false);
     }
     const ask = Number(p.ask_price), payout = Number(p.payout);
-    if (!(ask > 0) || !(payout > 0)) throw new Error("Invalid proposal price.");
-    return { id: String(p.id), ask, payout, ratio: payout / ask, at: Date.now(), stake: st, dir };
+    if (!(ask > 0) || (rfhl && !(payout > 0))) throw new Error("Invalid proposal price.");
+    return { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : NaN, at: Date.now(), stake: st, dir };
 }
 
 /* ================================================================
@@ -566,8 +613,9 @@ async function execute(dir, src, res) {
     log(src === "auto" ? `AUTO ${dir} · ${S.sym} · Q ${res.score} · 5m z ${res.f5.z.toFixed(2)} · 1m z ${res.f1.z.toFixed(2)}` : `MANUAL ${dir} · ${S.sym}`, "trade");
     try {
         if (st > S.bal * 0.95 && S.exec === "LIVE") throw new Error("Stake exceeds balance protection.");
+        if (S.exec === "PAPER" && O.mode === "VN") throw new Error("Vanillas cannot be paper-simulated — use LIVE on a demo account.");
         const p = fresh(dir, st) || await oneShot(dir, st);
-        if (src === "auto" && p.ratio < SG.minPayout - 0.005) {
+        if (src === "auto" && minPayFail(p)) {
             log(`Payout ${p.ratio.toFixed(2)}x below minimum — skipped.`, "warn");
             S.busy = false; S.cool = Date.now() + 3000; manualUI(); return false;
         }
@@ -601,9 +649,9 @@ async function buy(p, src) {
     }
     const id = Number(r.buy?.contract_id);
     if (!Number.isInteger(id) || id <= 0) throw new Error(`Invalid contract_id: ${r.buy?.contract_id}`);
-    S.contract = { id, dir: p.dir, src, stake: num(r.buy.buy_price, p.ask), payout: num(r.buy.payout, p.payout), entry: NaN, ee: NaN, profit: 0, ticks: 0, status: "open", done: false };
+    S.contract = { id, dir: p.dir, src, stake: num(r.buy.buy_price, p.ask), payout: num(r.buy.payout, p.payout), entry: NaN, ee: NaN, profit: 0, ticks: 0, status: "open", done: false, mode: O.mode, tk: O.mode !== "MU" && DM().u === "t" ? dur() : 0, secs: durSec(), mult: O.mult, ds: NaN, de: NaN, closing: false };
     S.subCon = r.subscription?.id || null;        // contract stream requested inside the BUY itself
-    S.ratio = S.contract.payout / S.contract.stake; S.trades++;
+    if (S.contract.payout > 0) S.ratio = S.contract.payout / S.contract.stake; S.trades++;
     log(`BUY ACCEPTED → contract ${id}`, "trade");
     contractUI(); ui();
 }
@@ -620,6 +668,7 @@ function onContract(m) {
     c.entry = f(k.entry_spot, c.entry); c.ee = f(k.entry_tick_time, c.ee); c.payout = f(k.payout, c.payout); c.stake = f(k.buy_price, c.stake);
     c.profit = f(k.profit, c.profit); c.status = k.status || c.status;
     c.ticks = Array.isArray(k.tick_stream) ? k.tick_stream.length : f(k.tick_count, c.ticks);
+    c.ds = f(k.date_start, c.ds); c.de = f(k.date_expiry, c.de);
     contractUI(); redraw();
     const fin = Number(k.is_expired) === 1 || Number(k.is_sold) === 1 || ["won", "lost", "sold", "cancelled"].includes(String(k.status || "").toLowerCase());
     if (fin && !c.done) {
@@ -630,20 +679,36 @@ function onContract(m) {
     }
 }
 function startPaper(dir, p, src) {
-    S.paper = { dir, src, stake: p.ask, payout: p.payout, entry: null, ee: NaN, n: 0 };
-    S.ratio = p.payout / p.ask; S.trades++;
-    log(`PAPER ${dir} · stake ${money(p.ask)} · payout ${money(p.payout)}`, "trade");
+    S.paper = { dir, src, stake: p.ask, payout: p.payout, entry: null, ee: NaN, n: 0, pl: 0, mode: O.mode, secs: durSec(), tk: O.mode !== "MU" && DM().u === "t" ? dur() : 0, bar: S.bar, mult: O.mult, tp: O.tp, sl: O.sl };
+    if (p.payout > 0) S.ratio = p.payout / p.ask; S.trades++;
+    log(`PAPER ${dir} · ${O.mode} · stake ${money(p.ask)}${p.payout > 0 ? ` · payout ${money(p.payout)}` : ` · ×${O.mult}`}`, "trade");
     contractUI(); ui();
 }
 function paperTick(q, e) {
     const p = S.paper; if (!p) return;
     if (p.entry === null) { p.entry = q; p.ee = e; p.n = 0; contractUI(); return; }      // entry spot = first tick AFTER purchase
-    p.n++; contractUI();
-    if (p.n >= dur()) {
-        const win = p.dir === "RISE" ? q > p.entry : q < p.entry;                           // ties lose
-        const x = p; S.paper = null;
-        finish(win ? x.payout - x.stake : -x.stake, "PAPER", x);
+    p.n++;
+    const up = p.dir === "RISE";
+    if (p.mode === "MU") {
+        p.pl = p.stake * p.mult * (q - p.entry) / p.entry * (up ? 1 : -1);
+        const lim = Math.min(p.sl > 0 ? p.sl : p.stake, p.stake); let out = null;
+        if (p.tp > 0 && p.pl >= p.tp) out = p.tp; else if (p.pl <= -lim) out = -lim;
+        contractUI();
+        if (out !== null) { const x = p; S.paper = null; finish(round2(out), "PAPER", x); }
+        return;
     }
+    contractUI();
+    if (!(p.tk ? p.n >= p.tk : e >= p.ee + p.secs)) return;
+    const off = p.mode === "HL" ? p.bar : 0, win = up ? q > p.entry + off : q < p.entry - off;      // ties lose
+    const x = p; S.paper = null;
+    finish(win ? x.payout - x.stake : -x.stake, "PAPER", x);
+}
+async function sellNow() {
+    if (S.paper && S.paper.mode === "MU") { const x = S.paper; S.paper = null; return void finish(round2(x.pl), "PAPER", x); }
+    const c = S.contract; if (!c || c.closing || c.mode !== "MU") return;
+    c.closing = true;
+    try { await sendWS({ sell: c.id, price: 0 }, { timeout: 7000, type: "sell" }); log("Close requested.", "trade"); }
+    catch (e) { c.closing = false; toast(`Close failed: ${e.message}`, 3000, "bad"); }
 }
 function finish(profit, label, x) {
     S.pl += profit;
@@ -657,6 +722,7 @@ function finish(profit, label, x) {
     flash(`${won ? "WIN" : lost ? "LOSS" : "FLAT"} ${profit >= 0 ? "+" : ""}${money(profit)}`, won ? "win" : "loss"); beep(won ? 988 : 330);
     S.cool = Date.now() + Math.max(0, SG.cooldown) * 1000; S.sigOk = false;
     S.busy = false; contractUI(true); ui(); renderTrades(); armSoon();
+    if (AM.on) S.amNext = Date.now() + 2000;
     if (SG.auto) {
         if (S.pl <= SG.maxLoss) autoOff("MAX LOSS");
         else if (S.pl >= SG.takeProfit) autoOff("TAKE PROFIT");
@@ -678,11 +744,11 @@ function checkSignal(res) {
     const fire = ok && !S.sigOk && Date.now() > S.sigCool;
     S.sigOk = ok;
     if (!fire) return;
-    const dir = res.dir > 0 ? "RISE" : "FALL", last = S.ticks[S.ticks.length - 1];
+    const dir = (res.dir > 0) !== SG.rev ? "RISE" : "FALL", last = S.ticks[S.ticks.length - 1];
     S.sigCool = Date.now() + 3000;
     S.marks.push({ k: "sig", e: last.e, q: last.q, dir });
-    beep(dir === "RISE" ? 880 : 660); toast(`${dir} signal · Q ${res.score}`, 2200, dir === "RISE" ? "ok" : "bad");
-    log(`SIGNAL ${dir} · ${S.sym} · Q ${res.score}`, "trade");
+    beep(dir === "RISE" ? 880 : 660); toast(`${dir}${SG.rev ? " (reversed)" : ""} signal · Q ${res.score}`, 2200, dir === "RISE" ? "ok" : "bad");
+    log(`SIGNAL ${res.dir > 0 ? "RISE" : "FALL"}${SG.rev ? ` → REVERSED to ${dir}` : ""} · ${S.sym} · Q ${res.score} · ${V.tf}`, "trade");
     if (SG.auto && ready() && !inTrade() && !S.busy && !S.switching && Date.now() > S.cool) execute(dir, "auto", res);
 }
 function setAuto(on) {
@@ -700,10 +766,10 @@ function applyPreset(name) {
     if (PRESETS[name]) { Object.assign(SG, clone(PRESETS[name])); SG.preset = name; } else SG.preset = "CUSTOM";
     sgChanged(false);
 }
-function reeval() { if (S.ticks.length) S.res = analyze(S.ticks.length > 900 ? S.ticks.slice(-900) : S.ticks, S.zones); S.sigOk = Boolean(S.res?.ok); renderHud(); renderRank(); redraw(); }
+function reeval() { if (S.ticks.length) S.res = analyze(S.ticks.length > 900 ? S.ticks.slice(-900) : S.ticks, S.zones, TFS[V.tf] ? S.cs : undefined); S.sigOk = Boolean(S.res?.ok); renderHud(); renderRank(); redraw(); }
 function applyParams() {
     ls.set("pw3-p", P);
-    if (S.ticks.length) { buildInd(S.ticks); S.zones = P.zOn ? findZones(S.ticks) : []; }
+    if (S.ticks.length) { buildInd(S.ticks); rebuildCS(); S.zones = P.zOn ? findZones(S.ticks) : []; }
     V.ema = P.emaOn; V.zones = P.zOn; V.sr = P.srOn; V.st = P.stOn;
     syncPInd(); reeval();
 }
@@ -836,23 +902,25 @@ function ui() {
     const pl = $("kPL"); pl.textContent = money(S.pl); pl.className = S.pl > 0 ? "pos" : S.pl < 0 ? "neg" : "";
     set("kWL", `${S.wins} / ${S.losses}`); set("kTrades", String(S.trades));
     const n = S.wins + S.losses;
-    set("kWR", n ? `${(S.wins / n * 100).toFixed(1)}%` : "—"); set("kBE", `breakeven ${(100 / S.ratio).toFixed(1)}%`);
+    set("kWR", n ? `${(S.wins / n * 100).toFixed(1)}%` : "—"); set("kBE", O.mode === "RF" || O.mode === "HL" ? `breakeven ${(100 / S.ratio).toFixed(1)}%` : "");
     set("kFill", S.execMs != null ? `${S.execMs} ms` : "—");
     $("autoTag").hidden = !SG.auto;
     const ac = $("autoChip"); ac.textContent = SG.auto ? "AUTO ON" : "AUTO OFF"; ac.classList.toggle("on", SG.auto);
+    const mc = $("amChip"); mc.textContent = AM.on ? `MKT AUTO · ${AMCAT[AM.cat].n}` : "MKT AUTO OFF"; mc.classList.toggle("on", AM.on);
     $("dStake").value !== String(S.stake) && document.activeElement !== $("dStake") && ($("dStake").value = S.stake);
-    $("durBtns").querySelectorAll("button").forEach(b => b.classList.toggle("on", Number(b.dataset.d) === dur()));
+    
     manualUI();
 }
 function manualUI() {
     const can = ready() && !inTrade() && !S.busy && !S.switching && Boolean(S.sym && S.subTick);
-    [["RISE", "mRise"], ["FALL", "mFall"]].forEach(([d, id]) => {
+    [["RISE", "mRise", 0], ["FALL", "mFall", 1]].forEach(([d, id, i]) => {
         const b = $(id); if (!b) return;
         const p = fresh(d, stake()); b.disabled = !can;
-        const em = b.querySelector("em"); if (em) em.textContent = p ? `${p.ratio.toFixed(2)}x · ${money(p.payout)}` : "—";
+        const sp = b.querySelector("span"); if (sp) sp.textContent = MLAB[O.mode][i];
+        const em = b.querySelector("em"); if (em) em.textContent = p ? (p.ratio > 0 ? `${p.ratio.toFixed(2)}x · ${money(p.payout)}` : O.mode === "MU" ? `×${O.mult} · ${money(p.ask)}` : money(p.ask)) : "—";
     });
     set("mStatus", !ready() ? "Connect to trade" : inTrade() ? "Trade running…" : S.switching ? "Switching market…" : S.busy ? "Executing…"
-        : `${S.exec}${S.exec === "LIVE" ? ` · ${S.acctType.toUpperCase()}` : ""} · ${dur()} ticks · ${S.sym || "—"}`);
+        : `${S.exec}${S.exec === "LIVE" ? ` · ${S.acctType.toUpperCase()}` : ""} · ${optDesc()} · ${S.sym || "—"}${SG.rev ? " · ↺ reverse" : ""}`);
 }
 function renderHud() {
     const T = S.ticks, n = T.length, r = S.res;
@@ -871,7 +939,7 @@ function renderHud() {
         $("qBar").style.width = `${r.score}%`; set("qVal", `Q ${r.score}`);
         const h = $("hBias"); h.textContent = `${r.dir > 0 ? "▲ RISE" : "▼ FALL"} BIAS`; h.className = `chip ${r.dir > 0 ? "up" : "dn"}`;
         const b = $("sigBadge");
-        if (r.ok) { b.className = `badge ${r.dir > 0 ? "rise" : "fall"}`; b.textContent = `${r.dir > 0 ? "RISE" : "FALL"} READY`; }
+        if (r.ok) { const d = (r.dir > 0) !== SG.rev; b.className = `badge ${d ? "rise" : "fall"}`; b.textContent = `${d ? "RISE" : "FALL"} READY${SG.rev ? " ↺" : ""}`; }
         else { const near = r.passed >= r.total - 2; b.className = `badge${near ? " watch" : ""}`; b.textContent = near ? `FORMING ${r.passed}/${r.total}` : "WAITING"; }
     } else {
         $("qBar").style.width = "0"; set("qVal", "Q —"); $("hBias").textContent = "BIAS —"; $("hBias").className = "chip mut"; $("sigBadge").className = "badge"; $("sigBadge").textContent = "WAITING";
@@ -892,16 +960,25 @@ function setRead(i) {
 function contractUI(clear = false) {
     const c = S.contract, p = S.paper, x = c || p, card = $("tradeCard");
     if (!x) { card.hidden = true; return; }
-    const n = c ? c.ticks : p.n;
-    card.hidden = false; set("tcSide", `${x.dir === "RISE" ? "▲" : "▼"} ${x.dir}`); set("tcN", `${Math.min(n, dur())} / ${dur()}`);
-    const live = c ? c.profit : null, el = $("tcPL");
-    if (live !== null) { el.textContent = money(live); el.className = live >= 0 ? "pos" : "neg"; }
+    const mu = x.mode === "MU", lastE = S.ticks[S.ticks.length - 1]?.e || 0;
+    card.hidden = false; set("tcSide", `${x.dir === "RISE" ? "▲" : "▼"} ${mu ? (x.dir === "RISE" ? "UP" : "DOWN") : x.dir}`);
+    let frac = 0, txt = "";
+    if (mu) txt = `OPEN ×${x.mult}`;
+    else if (x.tk) { const n = c ? c.ticks : p.n; frac = n / x.tk; txt = `${Math.min(n, x.tk)} / ${x.tk}t`; }
+    else {
+        const s0 = c ? c.ds : p.ee, tot = (c && c.de > c.ds ? c.de - c.ds : x.secs) || 1, el = Number.isFinite(s0) ? Math.max(0, lastE - s0) : 0;
+        frac = el / tot; txt = `${Math.min(Math.round(el), Math.round(tot))} / ${Math.round(tot)}s`;
+    }
+    set("tcN", txt);
+    const el = $("tcPL");
+    if (c) { el.textContent = money(c.profit); el.className = c.profit >= 0 ? "pos" : "neg"; }
+    else if (mu) { el.textContent = money(p.pl); el.className = p.pl >= 0 ? "pos" : "neg"; }
     else {
         const q = S.ticks[S.ticks.length - 1]?.q, en = p.entry;
-        if (en !== null && q !== undefined) { const w = p.dir === "RISE" ? q > en : q < en; el.textContent = w ? `+${money(p.payout - p.stake)}` : money(-p.stake); el.className = w ? "pos" : "neg"; }
+        if (en !== null && q !== undefined) { const off = p.mode === "HL" ? p.bar : 0, w = p.dir === "RISE" ? q > en + off : q < en - off; el.textContent = w ? `+${money(p.payout - p.stake)}` : money(-p.stake); el.className = w ? "pos" : "neg"; }
         else { el.textContent = "entering…"; el.className = ""; }
     }
-    $("tcBar").style.width = `${clamp(n / dur() * 100, 0, 100)}%`;
+    $("tcBar").style.width = `${clamp(frac * 100, 0, 100)}%`; $("tcBar").parentElement.hidden = mu; $("tcClose").hidden = !mu;
     $("tcSide").className = x.dir === "RISE" ? "pos" : "neg";
 }
 function renderTrades() {
@@ -917,7 +994,6 @@ function setStake(v) {
     S.stake = Math.max(0.35, round2(num(v, S.stake))); ls.set("pw3-stake", S.stake);
     $("dStake").value = S.stake; ui(); armSoon(250);
 }
-function setDur(d) { S.dur = clamp(Math.floor(d), 5, 10); ls.set("pw3-dur", S.dur); ui(); armSoon(150); reeval(); }
 function manualTrade(dir) { execute(dir, "manual"); }
 
 /* ---------- drawer panels (generated from schemas) ---------- */
@@ -929,8 +1005,8 @@ const PSCHEMA = [
 ];
 const SSCHEMA = [["z5Min", "5m trend z ≥", 0.2, 4, 0.1], ["z1Min", "1m trend z ≥", 0, 3, 0.1], ["holdMin", "Ticks held before cross", 1, 10, 1], ["crossMin", "Cross strength σ", 0, 2, 0.05],
 ["crossWin", "Cross window (ticks)", 1, 6, 1], ["maxFlips", "Max chop flips", 0, 12, 1], ["volCap", "Volatility ceiling", 1, 4, 0.1], ["volMin", "Volatility floor", 0.1, 1.5, 0.05],
-["zoneRoom", "Zone room ×", 0, 4, 0.1], ["srLow", "StochRSI zone", 10, 45, 5], ["minQ", "Min score Q", 0, 100, 5]];
-const AFIELDS = [["cooldown", "Cooldown (s)", 0, 600, 1], ["maxTrades", "Max auto trades (0=∞)", 0, 999, 1], ["takeProfit", "Take profit $", 1, 99999, 1], ["maxLoss", "Max loss $", -99999, -1, 1], ["minPayout", "Min payout ×", 1, 3, 0.01]];
+["zoneRoom", "Zone room ×", 0, 4, 0.1], ["srLow", "StochRSI zone", 10, 45, 5], ["minQ", "Min score Q", 0, 100, 5], ["xWin", "Double-cross window (bars)", 2, 40, 1]];
+const AFIELDS = [["cooldown", "Cooldown (s)", 0, 600, 1], ["maxTrades", "Max auto trades (0=∞)", 0, 999, 1], ["takeProfit", "Session take profit $", 1, 99999, 1], ["maxLoss", "Session max loss $", -99999, -1, 1], ["minPayout", "Min payout ×", 1, 3, 0.01]];
 const nf = (attr, f) => `<label>${f[1]}<input type="number" data-${attr}="${f[0]}" min="${f[2]}" max="${f[3]}" step="${f[4]}"></label>`;
 function buildPanes() {
     let h = `<p class="note">Indicators run on the <b>tick stream</b> — what the contract settles on — whichever candle timeframe you view.</p>`;
@@ -945,8 +1021,17 @@ function buildPanes() {
     $("pReset").onclick = () => { Object.assign(P, P0); applyParams(); };
     h = `<label>Preset<select id="sgPreset"><option>SAFE</option><option>BALANCED</option><option>FAST</option><option>CUSTOM</option></select></label>
       <p class="note">A signal fires when every <b>required</b> confirmation passes and the score reaches the minimum. Tap the chips on the chart to require / unrequire them too.</p>
+      <div class="sub">ENTRY TRIGGER <small style="display:inline">· runs on the chart timeframe you are viewing</small></div>
+      <label>Trigger<select id="sgTrig"><option value="CONF">Confluence (score + required boxes)</option><option value="XCROSS">EMA + Supertrend double-cross</option><option value="ZONE">Supply / demand zone trigger</option></select></label>
+      <label>Zone trigger<select id="sgZMode"><option value="OFF">Off</option><option value="TOUCH">Touch (enter zone with bias)</option><option value="BREAK">Break (pierce zone with bias)</option><option value="BOTH">Touch + Break</option></select></label>
+      <label class="switch"><input type="checkbox" data-sg="rev"><span></span> Reverse signal (RISE signal opens FALL)</label>
       <div class="sub">REQUIRED CONFIRMATIONS</div><div class="reqs">${FACT.map(([id]) => `<label class="chk"><input type="checkbox" data-req="${id}"> ${FACT_NAME[id]}</label>`).join("")}</div>
       <div class="sub">THRESHOLDS</div><div class="grid2">${SSCHEMA.map(f => nf("sg", f)).join("")}</div>
+      <div class="sub">MARKET AUTO-SELECT</div>
+      <label class="switch"><input type="checkbox" id="amOn"><span></span> Auto-select a market by score band</label>
+      <label>Category<select id="amCat"><option value="VHIGH">Very high · 75%+</option><option value="HIGH">High · 56–74%</option><option value="MED">Medium · 50–55%</option><option value="LOW">Low · 25–49%</option><option value="VLOW">Very low · below 25%</option></select></label>
+      <label>Rescan every (s)<input type="number" id="amEvery" min="20" max="900" step="5"></label>
+      <p class="note">Scans on the timer (never mid-trade), after every trade, and when the current market leaves the band. Your trade option below the chart is kept.</p>
       <div class="sub">AUTO ENTRY</div>
       <label class="switch"><input type="checkbox" id="sgAuto"><span></span> Auto-enter when a signal fires</label>
       <label class="switch"><input type="checkbox" data-sg="sound"><span></span> Sound alerts</label>
@@ -956,6 +1041,11 @@ function buildPanes() {
     $("paneSig").addEventListener("change", ev => {
         const e = ev.target;
         if (e.id === "sgPreset") return applyPreset(e.value);
+        if (e.id === "sgTrig") return applyTrig(e.value);
+        if (e.id === "sgZMode") { SG.zMode = e.value; return sgChanged(false); }
+        if (e.id === "amOn") return setAM(e.checked);
+        if (e.id === "amCat") { AM.cat = e.value; saveAM(); S.amNext = 0; return ui(); }
+        if (e.id === "amEvery") { AM.every = clamp(num(e.value, 60), 20, 900); return saveAM(); }
         if (e.id === "sgAuto") return setAuto(e.checked);
         if (e.dataset.req) { SG.req[e.dataset.req] = e.checked ? 1 : 0; return sgChanged(); }
         const k = e.dataset.sg; if (!k) return;
@@ -970,7 +1060,7 @@ function syncPInd() {
     V.ema = P.emaOn; V.zones = P.zOn; V.sr = P.srOn; V.st = P.stOn;
 }
 function syncPSig() {
-    $("sgPreset").value = SG.preset; $("sgAuto").checked = SG.auto;
+    $("sgPreset").value = SG.preset; $("sgAuto").checked = SG.auto; $("sgTrig").value = SG.trig; $("sgZMode").value = SG.zMode; $("amOn").checked = AM.on; $("amCat").value = AM.cat; $("amEvery").value = AM.every;
     document.querySelectorAll("#paneSig [data-req]").forEach(e => { e.checked = Boolean(SG.req[e.dataset.req]); });
     document.querySelectorAll("#paneSig [data-sg]").forEach(e => { const v = SG[e.dataset.sg]; if (e.type === "checkbox") e.checked = Boolean(v); else e.value = v; });
     $("autoTag").hidden = !SG.auto;
@@ -1025,13 +1115,15 @@ function draw() {
     const tR = last + span * 0.08 - V.off, tL = tR - span, tfs = TFS[V.tf];
     const X = e => L + PW * (e - tL) / span;
     const i0 = Math.max(0, lb(T, tL) - 1), i1 = Math.min(T.length, lb(T, tR) + 1), step = Math.max(1, Math.ceil((i1 - i0) / (PW * 1.2)));
+    const IND = tfs ? S.cs : T, j0 = Math.max(0, lb(IND, tL) - 1), j1 = Math.min(IND.length, lb(IND, tR) + 1), jstep = Math.max(1, Math.ceil((j1 - j0) / (PW * 1.2))), ox = tfs ? tfs / 2 : 0;
     let lo = Infinity, hi = -Infinity, cds = null;
     if (tfs) { cds = buildCandles(T, tfs, tL, tR); cds.forEach(c => { if (c.l < lo) lo = c.l; if (c.h > hi) hi = c.h; }); }
     for (let i = i0; i < i1; i++) {
         const t = T[i];
         if (!tfs) { if (t.q < lo) lo = t.q; if (t.q > hi) hi = t.q; }
-        if (V.ema) { if (t.m < lo) lo = t.m; if (t.m > hi) hi = t.m; }
+        if (V.ema && !tfs) { if (t.m < lo) lo = t.m; if (t.m > hi) hi = t.m; }
     }
+    if (tfs && V.ema) for (let j = j0; j < j1; j++) { const t = IND[j]; if (t.m < lo) lo = t.m; if (t.m > hi) hi = t.m; }
     const ent = S.contract?.entry ?? S.paper?.entry;
     if (Number.isFinite(ent)) { lo = Math.min(lo, ent); hi = Math.max(hi, ent); }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = T[T.length - 1].q - 1; hi = lo + 2; }
@@ -1092,8 +1184,8 @@ function draw() {
     if (V.st && P.stOn) {
         g.lineWidth = 1.6; let run = null;
         const flush = () => { if (run) { g.stroke(); run = null; } };
-        for (let i = i0; i < i1; i += step) {
-            const t = T[i], px = X(t.e), py = Y(t.st);
+        for (let i = j0; i < j1; i += jstep) {
+            const t = IND[i], px = X(t.e + ox), py = Y(t.st);
             if (!run || run.d !== t.sdir) { flush(); g.strokeStyle = t.sdir > 0 ? "rgba(34,227,161,.75)" : "rgba(255,77,109,.75)"; g.beginPath(); g.moveTo(px, py); run = { d: t.sdir }; }
             else g.lineTo(px, py);
         }
@@ -1102,7 +1194,7 @@ function draw() {
     // EMA (the exact line the strategy trades)
     if (V.ema && P.emaOn) {
         g.strokeStyle = "#c4b5fd"; g.lineWidth = 1.8; g.beginPath();
-        for (let i = i0; i < i1; i += step) (i === i0 ? g.moveTo(X(T[i].e), Y(T[i].m)) : g.lineTo(X(T[i].e), Y(T[i].m)));
+        for (let i = j0; i < j1; i += jstep) (i === j0 ? g.moveTo(X(IND[i].e + ox), Y(IND[i].m)) : g.lineTo(X(IND[i].e + ox), Y(IND[i].m)));
         g.stroke();
     }
     // drawings
@@ -1132,7 +1224,7 @@ function draw() {
         g.save(); g.beginPath(); g.rect(L, subTop, PW, subH); g.clip(); g.lineWidth = 1.4;
         [["dd", "#fbbf24"], ["k", "#22d3ee"]].forEach(([key, col]) => {
             g.strokeStyle = col; g.beginPath();
-            for (let i = i0; i < i1; i += step) (i === i0 ? g.moveTo(X(T[i].e), Y2(T[i][key])) : g.lineTo(X(T[i].e), Y2(T[i][key])));
+            for (let i = j0; i < j1; i += jstep) (i === j0 ? g.moveTo(X(IND[i].e + ox), Y2(IND[i][key])) : g.lineTo(X(IND[i].e + ox), Y2(IND[i][key])));
             g.stroke();
         });
         g.restore(); g.fillStyle = "#8696b8"; g.fillText(`StochRSI ${P.rsi}·${P.stoch}·${P.k}·${P.d}`, L + 6, subTop + 12);
@@ -1267,7 +1359,7 @@ function toggleFS(force) {
 ================================================================ */
 function wire() {
     const on = (id, fn, ev = "click") => $(id)?.addEventListener(ev, fn);
-    $("durBtns").innerHTML = [5, 6, 7, 8, 9, 10].map(d => `<button data-d="${d}">${d}t</button>`).join("");
+    wireOpt();
     buildMeter(); buildPanes();
     // login / account
     on("liGo", oauthLogin); on("logoutBtn", logout);
@@ -1298,12 +1390,12 @@ function wire() {
     on("dStake", () => setStake($("dStake").value), "change");
     on("mMinus", () => setStake(S.stake <= 1 ? S.stake - 0.05 : S.stake - 0.5)); on("mPlus", () => setStake(S.stake < 1 ? S.stake + 0.05 : S.stake + 0.5));
     on("mHalf", () => setStake(S.stake / 2)); on("mDouble", () => setStake(S.stake * 2));
-    $("durBtns").addEventListener("click", ev => { const b = ev.target.closest("[data-d]"); if (b) setDur(Number(b.dataset.d)); });
+    
     // chart toolbar
     $("tfBtns").addEventListener("click", ev => {
         const b = ev.target.closest("[data-tf]"); if (!b) return;
         V.tf = b.dataset.tf; V.span = SPAN[V.tf]; V.off = 0; V.ys = 1;
-        document.querySelectorAll("#tfBtns [data-tf]").forEach(x => x.classList.toggle("on", x === b)); redraw();
+        document.querySelectorAll("#tfBtns [data-tf]").forEach(x => x.classList.toggle("on", x === b)); rebuildCS(); S.sigOk = false; reeval();
     });
     $("toolBtns").addEventListener("click", ev => {
         if (ev.target.id === "clrDraw") { if (S.sym && (D.items[S.sym] || []).length && confirm("Clear all drawings on this market?")) { D.items[S.sym] = []; saveDraw(); redraw(); } return; }
@@ -1337,9 +1429,251 @@ function wire() {
     });
     wireChart(); setTool("cursor");
 }
+/* ================================================================
+   v3.1  ·  TRADE OPTIONS (Rise/Fall · Higher/Lower · Multipliers · Vanillas)
+         ·  CHART-TIMEFRAME SIGNALS  ·  MARKET AUTO-SELECT
+================================================================ */
+const O = Object.assign({ mode: "RF", dm: { RF: { u: "t", v: 5 }, HL: { u: "m", v: 2 }, VN: { u: "m", v: 5 } }, hlMode: "payout", hlPay: 2.5, hlOff: 0.5, mult: 100, tp: 0, sl: 0, vnBar: "" }, ls.get("pw3-opt", {}));
+const saveO = () => ls.set("pw3-opt", O);
+const AM = Object.assign({ on: false, cat: "VHIGH", every: 60 }, ls.get("pw3-am", {})); AM.on = false;
+const saveAM = () => ls.set("pw3-am", AM);
+const AMCAT = { VHIGH: { n: "V.HIGH", r: [75, 100] }, HIGH: { n: "HIGH", r: [56, 74] }, MED: { n: "MED", r: [50, 55] }, LOW: { n: "LOW", r: [25, 49] }, VLOW: { n: "V.LOW", r: [0, 24] } };
+const UNITS = { RF: ["t", "s", "m", "h"], HL: ["s", "m", "h"], VN: ["m", "h", "d"] };
+const UL = { t: "ticks", s: "seconds", m: "minutes", h: "hours", d: "days" };
+const U_SEC = { t: 0, s: 1, m: 60, h: 3600, d: 86400 };
+const CHIPS = { t: [5, 6, 7, 8, 9, 10], s: [15, 30, 45, 60, 90, 120], m: [1, 2, 3, 5, 10, 15], h: [1, 2, 4, 6, 12, 24], d: [1, 2, 3, 5, 7, 14] };
+const DEFLIM = { RF: { t: [5, 10], s: [15, 86400], m: [1, 1440], h: [1, 24] }, HL: { s: [15, 86400], m: [1, 1440], h: [1, 24] }, VN: { m: [1, 1440], h: [1, 24], d: [1, 365] } };
+const MLAB = { RF: ["▲ RISE", "▼ FALL"], HL: ["▲ HIGHER", "▼ LOWER"], MU: ["▲ UP", "▼ DOWN"], VN: ["▲ CALL", "▼ PUT"] };
+const DM = () => O.dm[O.mode] || O.dm.RF;
+const unit = () => DM().u;
+const tickSec = () => /^1HZ/.test(S.sym || "") ? 1 : 2;
+const durSec = () => O.mode === "MU" ? 0 : unit() === "t" ? dur() * tickSec() : dur() * U_SEC[unit()];
+const durTicks = () => O.mode === "MU" ? 10 : Math.max(1, Math.round(durSec() / tickSec()));
+function durLimits(mode, u) { const m = mode === "MU" ? "RF" : mode; return S.specs[S.sym]?.[m]?.[u] || DEFLIM[m]?.[u] || [1, 1000]; }
+function optDesc() {
+    if (O.mode === "MU") return `MULT ×${O.mult}${O.tp > 0 ? ` TP ${money(O.tp)}` : ""}${O.sl > 0 ? ` SL ${money(O.sl)}` : ""}`;
+    const d = `${dur()}${unit()}`;
+    return O.mode === "HL" ? `HL ${d}${S.bar ? ` ±${S.bar.toFixed(dec())}` : ""}` : O.mode === "VN" ? `VANILLA ${d}` : `RF ${d}`;
+}
+
+/* ---- contract specs (best effort: falls back to safe defaults, the server validates every quote) ---- */
+async function loadSpecs(sym) {
+    if (S.specs[sym]?.done) return;
+    const sp = S.specs[sym] = { done: true, mult: null, vnBars: null, RF: {}, HL: {}, VN: {} };
+    try {
+        const r = await sendWS({ contracts_for: sym, currency: S.cur, product_type: "basic" }, { timeout: 8000, type: "contracts" });
+        const parse = s => { const m = /^(\d+)([tsmhd])$/.exec(String(s || "")); return m ? { v: +m[1], u: m[2] } : null; };
+        const toSec = x => x.u === "t" ? x.v * tickSec() : x.v * U_SEC[x.u];
+        (r.contracts_for?.available || []).forEach(c => {
+            const cat = c.contract_category, ct = String(c.contract_type || "");
+            if (cat === "multiplier" || /^MULT/.test(ct)) { if (Array.isArray(c.multiplier_range)) sp.mult = c.multiplier_range.map(Number); return; }
+            const key = /^VANILLA/.test(ct) ? "VN" : (cat === "callput" && (ct === "CALL" || ct === "PUT")) ? (/non_atm/.test(c.barrier_category || "") ? "HL" : "RF") : null;
+            if (!key) return;
+            if (key === "VN" && Array.isArray(c.barrier_choices)) sp.vnBars = c.barrier_choices.map(String);
+            const a = parse(c.min_contract_duration), b = parse(c.max_contract_duration), rg = sp[key]; if (!a || !b) return;
+            if (a.u === "t") { if (b.u === "t" && key === "RF") rg.t = [Math.min(rg.t?.[0] ?? 1e9, a.v), Math.max(rg.t?.[1] ?? 0, b.v)]; return; }
+            const s0 = toSec(a), s1 = toSec(b);
+            ["s", "m", "h", "d"].forEach(u => { const lo = Math.max(1, Math.ceil(s0 / U_SEC[u])), hi = Math.floor(s1 / U_SEC[u]); if (hi >= lo) rg[u] = [Math.min(rg[u]?.[0] ?? 1e9, lo), Math.max(rg[u]?.[1] ?? 0, hi)]; });
+        });
+        log(`Contract specs loaded for ${sym}.`);
+    } catch (e) { sp.done = false; log(`contracts_for ${sym} unavailable → defaults in use (${e.message})`, "warn"); setTimeout(() => { if (S.specs[sym] && !S.specs[sym].done) delete S.specs[sym]; }, 30000); }
+}
+function multFallback(sym) {
+    const v = Number((/\d+/.exec(String(sym || "").replace(/^1HZ/, "")) || [100])[0]);
+    const M = { 10: [400, 1000, 2000, 3000, 4000], 25: [160, 400, 800, 1200, 1600], 50: [80, 200, 400, 600, 800], 75: [50, 100, 200, 300, 400], 100: [40, 100, 200, 300, 400] };
+    return M[v] || M[100];
+}
+const multList = () => S.specs[S.sym]?.mult || multFallback(S.sym);
+function fixMult() { const l = multList(); if (!l.includes(O.mult)) { O.mult = l[Math.floor(l.length / 2)]; saveO(); renderOpt(); } }
+function vnBarrier() {
+    const l = S.specs[S.sym]?.vnBars; if (!l || !l.length) return O.vnBar || "+0.00";
+    if (l.includes(O.vnBar)) return O.vnBar;
+    return l.slice().sort((a, b) => Math.abs(parseFloat(a)) - Math.abs(parseFloat(b)))[0];
+}
+
+/* ---- one place that builds every proposal ---- */
+function propReq(side, st) {
+    const up = side === "RISE", b = { proposal: 1, amount: st, basis: "stake", currency: S.cur, underlying_symbol: S.sym };
+    if (O.mode === "MU") {
+        const lo = {}; if (O.tp > 0) lo.take_profit = round2(O.tp); if (O.sl > 0) lo.stop_loss = round2(O.sl);
+        return Object.assign(b, { contract_type: up ? "MULTUP" : "MULTDN", multiplier: O.mult }, Object.keys(lo).length ? { limit_order: lo } : {});
+    }
+    Object.assign(b, { duration: dur(), duration_unit: unit() });
+    if (O.mode === "HL") return Object.assign(b, { contract_type: RF[side], barrier: (up ? "+" : "-") + (S.bar || 0).toFixed(dec()) });
+    if (O.mode === "VN") return Object.assign(b, { contract_type: up ? "VANILLALONGCALL" : "VANILLALONGPUT", barrier: vnBarrier() });
+    return Object.assign(b, { contract_type: RF[side] });
+}
+const qKey = st => `${S.sym}|${st}|${S.cur}|${O.mode}|${O.mode === "MU" ? `${O.mult}|${O.tp}|${O.sl}` : `${unit()}${dur()}|${O.mode === "HL" ? S.bar : O.mode === "VN" ? vnBarrier() : ""}`}|${RF.RISE}`;
+function minPayFail(p) {
+    if (O.mode === "RF") return p.ratio < SG.minPayout - 0.005;
+    if (O.mode === "HL" && O.hlMode === "payout") return p.ratio < O.hlPay * 0.9;
+    return false;
+}
+
+/* ---- Higher/Lower barrier from the payout you asked for ---- */
+async function probe(off, st) {
+    const r = await sendWS(Object.assign(propReq("RISE", st), { barrier: "+" + off.toFixed(dec()) }), { timeout: 5000, type: "barrier probe" });
+    const ask = Number(r.proposal?.ask_price), pay = Number(r.proposal?.payout);
+    if (!(ask > 0) || !(pay > 0)) throw new Error("probe quote invalid");
+    return pay / ask;
+}
+async function solveBar(st) {
+    const ck = `${S.sym}|${unit()}${dur()}|${O.hlPay}`, hit = S.barMap[ck];
+    if (hit && Date.now() - hit.at < 600000) return hit.off;
+    const sig = std(deltas(S.ticks.slice(-300))) || 0.01, steps = Math.max(1, durSec() / tickSec()), minB = Math.pow(10, -dec()), tg = O.hlPay;
+    let off = Math.max(minB, sig * Math.sqrt(steps) * 0.6), lo = null, hi = null, best = null;
+    for (let i = 0; i < 8; i++) {
+        off = Math.max(minB, Number(off.toFixed(dec())));
+        let r;
+        try { r = await probe(off, st); }
+        catch (e) {
+            if (/minimum|at least|too close|too small|too low/i.test(e.message)) { off *= 1.8; continue; }
+            if (/maximum|too far|too large|at most|too high|exceed/i.test(e.message)) { off /= 1.8; continue; }
+            throw e;
+        }
+        if (!best || Math.abs(r - tg) < Math.abs(best.r - tg)) best = { off, r };
+        if (Math.abs(r - tg) / tg < 0.03) break;
+        if (r < tg) lo = { off, r }; else hi = { off, r };
+        if (lo && hi && hi.off > lo.off) { const f = (Math.log(tg) - Math.log(lo.r)) / ((Math.log(hi.r) - Math.log(lo.r)) || 1); off = lo.off + (hi.off - lo.off) * clamp(f, 0.1, 0.9); }
+        else off *= clamp(Math.pow(tg / r, 1.4), 0.4, 2.5);
+    }
+    if (!best) throw new Error("no barrier found for that payout");
+    S.barMap[ck] = { off: best.off, at: Date.now() };
+    log(`Barrier solved ${S.sym}: ±${best.off.toFixed(dec())} → ${best.r.toFixed(2)}x (target ${tg}x)`);
+    return best.off;
+}
+async function ensureBar(st) {
+    if (O.mode !== "HL") return;
+    if (O.hlMode === "offset") { S.bar = Math.max(Math.pow(10, -dec()), O.hlOff); }
+    else {
+        const key = `${S.sym}|${unit()}${dur()}|${O.hlPay}`;
+        if (S.barKey !== key || !S.bar) { S.bar = await solveBar(st); S.barKey = key; }
+    }
+    set("oBarRead", `±${S.bar.toFixed(dec())}`);
+}
+
+/* ---- timeframe candles carrying their own EMA / Supertrend / StochRSI ---- */
+function rebuildCS() {
+    const tf = TFS[V.tf]; S.cs = []; if (!tf || !S.ticks.length) return;
+    let cur = null;
+    for (const t of S.ticks) {
+        const b = Math.floor(t.e / tf) * tf;
+        if (!cur || cur.e !== b) { cur = { e: b, q: t.q, o: t.q, h: t.q, l: t.q }; S.cs.push(cur); }
+        else { cur.q = t.q; if (t.q > cur.h) cur.h = t.q; if (t.q < cur.l) cur.l = t.q; }
+    }
+    buildInd(S.cs);
+}
+function updateCS(t) {
+    const tf = TFS[V.tf]; if (!tf) return;
+    const C = S.cs, b = Math.floor(t.e / tf) * tf, last = C[C.length - 1];
+    if (last && last.e === b) { last.q = t.q; if (t.q > last.h) last.h = t.q; if (t.q < last.l) last.l = t.q; }
+    else { C.push({ e: b, q: t.q, o: t.q, h: t.q, l: t.q }); if (C.length > MAX_TICKS) C.shift(); }
+    calcInd(C, C.length - 1);
+}
+
+/* ---- trade-option panel (under the chart) ---- */
+function renderOpt() {
+    const el = $("optRow"); if (!el) return;
+    document.querySelectorAll("#modeBtns [data-m]").forEach(b => b.classList.toggle("on", b.dataset.m === O.mode));
+    const u = unit(), [a, b] = durLimits(O.mode, u), d = dur();
+    const seg = `<div class="useg">${(UNITS[O.mode] || []).map(x => `<button data-u="${x}" class="${x === u ? "on" : ""}" title="${UL[x]}">${x}</button>`).join("")}</div>`;
+    const chips = `<div class="chips">${CHIPS[u].filter(v => v >= a && v <= b).map(v => `<button data-d="${v}" class="${v === d ? "on" : ""}">${v}</button>`).join("")}<input type="number" id="oDur" min="${a}" max="${b}" value="${d}" title="Duration in ${UL[u]}"></div>`;
+    let h = "";
+    if (O.mode === "RF") h = seg + chips;
+    else if (O.mode === "HL") {
+        h = seg + chips + `<label>Barrier<select id="oHlMode"><option value="payout"${O.hlMode === "payout" ? " selected" : ""}>by payout</option><option value="offset"${O.hlMode === "offset" ? " selected" : ""}>fixed offset</option></select></label>`
+          + (O.hlMode === "payout" ? `<label>Payout ×<input type="number" id="oHlPay" min="1.1" max="50" step="0.1" value="${O.hlPay}"></label>` : `<label>Offset<input type="number" id="oHlOff" min="0" step="any" value="${O.hlOff}"></label>`)
+          + `<span class="tag" id="oBarRead">${S.bar ? `±${S.bar.toFixed(dec())}` : "—"}</span>`;
+    } else if (O.mode === "MU") {
+        const l = multList();
+        h = `<label>Multiplier<select id="oMult">${l.map(v => `<option value="${v}"${v === O.mult ? " selected" : ""}>×${v}</option>`).join("")}</select></label>`
+          + `<label>TP $<input type="number" id="oTp" min="0" step="0.01" placeholder="off" value="${O.tp || ""}"></label><label>SL $<input type="number" id="oSl" min="0" step="0.01" placeholder="off" value="${O.sl || ""}"></label>`;
+    } else {
+        const l = S.specs[S.sym]?.vnBars || [], cur = vnBarrier();
+        h = seg + chips + (l.length ? `<label>Strike<select id="oVn">${l.map(v => `<option${v === cur ? " selected" : ""}>${v}</option>`).join("")}</select></label>` : `<span class="tag">strike: auto</span>`);
+    }
+    el.innerHTML = h;
+}
+function optChanged() { S.barKey = ""; saveO(); disarm(); renderOpt(); ui(); armSoon(150); reeval(); }
+function setDur(v) { const [a, b] = durLimits(O.mode, unit()); DM().v = clamp(Math.floor(num(v, a)), a, b); optChanged(); }
+function setUnit(u) { const [a, b] = durLimits(O.mode, u); DM().u = u; DM().v = CHIPS[u].find(v => v >= a && v <= b) || a; optChanged(); }
+function setMode(m) {
+    if (m === O.mode) return;
+    if (inTrade() || S.busy) return void toast("Locked while a trade is active.", 2000, "bad");
+    if (SG.auto) autoOff("TRADE OPTION CHANGED — set its values, then re-enable AUTO");
+    O.mode = m; S.bar = 0; optChanged();
+    if (m === "VN" && S.exec === "PAPER") toast("Vanillas have no paper mode — use LIVE on a demo account.", 3500, "bad");
+}
+function wireOpt() {
+    $("modeBtns").addEventListener("click", ev => { const b = ev.target.closest("[data-m]"); if (b) setMode(b.dataset.m); });
+    const oe = $("optRow");
+    oe.addEventListener("click", ev => {
+        const u = ev.target.closest("[data-u]"); if (u) return setUnit(u.dataset.u);
+        const d = ev.target.closest("[data-d]"); if (d) setDur(Number(d.dataset.d));
+    });
+    oe.addEventListener("change", ev => {
+        const e = ev.target;
+        switch (e.id) {
+            case "oDur": return setDur(e.value);
+            case "oHlMode": O.hlMode = e.value; break;
+            case "oHlPay": O.hlPay = clamp(num(e.value, 2.5), 1.1, 50); break;
+            case "oHlOff": O.hlOff = Math.max(0, num(e.value, 0.5)); break;
+            case "oMult": O.mult = Number(e.value); break;
+            case "oTp": O.tp = Math.max(0, num(e.value, 0)); break;
+            case "oSl": O.sl = Math.max(0, num(e.value, 0)); break;
+            case "oVn": O.vnBar = e.value; break;
+            default: return;
+        }
+        optChanged();
+    });
+    $("amChip").addEventListener("click", () => setAM(!AM.on));
+    $("tcClose").addEventListener("click", sellNow);
+    renderOpt();
+}
+
+/* ---- entry trigger presets ---- */
+function applyTrig(v) {
+    SG.trig = v; const R = SG.req;
+    if (v === "XCROSS") { Object.assign(R, { t5: 0, t1: 0, cross: 0, srsi: 0, st: 0, xc: 1, zone: 0, zt: 0, vol: 1, chop: 0 }); SG.minQ = 0; }
+    else if (v === "ZONE") {
+        if (!P.zOn) { P.zOn = true; applyParams(); }
+        if (SG.zMode === "OFF") SG.zMode = "BOTH";
+        Object.assign(R, { t5: 1, t1: 0, cross: 0, srsi: 0, st: 0, xc: 0, zone: 0, zt: 1, vol: 1, chop: 0 }); SG.minQ = 0;
+    } else return applyPreset(PRESETS[SG.preset] ? SG.preset : "BALANCED");
+    SG.preset = "CUSTOM"; sgChanged(false);
+}
+
+/* ---- market auto-select ---- */
+function setAM(on) {
+    AM.on = on; saveAM(); S.amNext = 0; S.amOut = 0; ui(); syncPSig();
+    log(`Market auto-select ${on ? `ON · ${AMCAT[AM.cat].n} ${AMCAT[AM.cat].r.join("–")}%` : "OFF"}`, on ? "trade" : "info");
+    toast(`Market auto-select ${on ? "ON" : "OFF"}`, 1800, on ? "ok" : "");
+}
+async function autoSelect(why) {
+    if (!AM.on || !ready() || inTrade() || S.busy || S.switching || S.scanning || S.amBusy) return;
+    S.amBusy = true;
+    try {
+        await scan(`auto-select · ${why}`);
+        if (!AM.on || inTrade() || S.busy) return;
+        const [a, b] = AMCAT[AM.cat].r, pool = S.rank.filter(r => r.score >= a && r.score <= b);
+        S.amNext = Date.now() + AM.every * 1000;
+        if (!pool.length) { log(`Auto-select: nothing in ${AMCAT[AM.cat].n} (${a}–${b}%) — staying on ${S.sym}.`, "warn"); return; }
+        const pick = pool.find(r => r.sym === S.sym) || pool[0];
+        if (pick.sym !== S.sym) { log(`Auto-select → ${pick.sym} (score ${pick.score})`, "trade"); toast(`Market → ${pick.sym} · Q ${pick.score}`, 2200, "ok"); await useMarket(pick.sym); }
+    } finally { S.amBusy = false; }
+}
+function amTick() {
+    if (!AM.on || !ready() || inTrade() || S.busy || S.switching || S.scanning || S.amBusy || S.unconfirmedUntil) return;
+    const now = Date.now();
+    if (now >= S.amNext) return void autoSelect("timer");
+    const sc = S.res?.score, [a, b] = AMCAT[AM.cat].r;
+    if (sc != null && (sc < a || sc > b)) { S.amOut = S.amOut || now; if (now - S.amOut > 15000 && now - S.rankAt > 20000) { S.amOut = 0; autoSelect("conditions changed"); } }
+    else S.amOut = 0;
+}
+
 async function boot() {
     wire(); ui(); contractUI(true); renderTrades(); renderHud(); link("off"); redraw();
-    set("ver", "v3.0");
+    set("ver", "v3.1"); setInterval(amTick, 4000);
     log("PSYCHIC WINNER Manual Pro ready. PAPER by default — switch to LIVE when you are ready.");
     log("Keys: R / ↑ = RISE · F / ↓ = FALL · M = full screen · Esc = cancel / close.");
     await oauthCallback();
