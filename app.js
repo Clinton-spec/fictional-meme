@@ -57,7 +57,7 @@ const PRESETS = {
 };
 Object.values(PRESETS).forEach(p => { p.req.xc = 0; p.req.zt = 0; });
 const SIGKEYS = ["xWin", "z5Min", "z1Min", "holdMin", "crossMin", "crossWin", "maxFlips", "volCap", "volMin", "zoneRoom", "srLow", "minQ"];
-const SG = Object.assign({ preset: "BALANCED", ...clone(PRESETS.BALANCED), auto: false, sound: true, trig: "CONF", rev: false, xWin: 12, zMode: "BOTH", cooldown: 10, maxTrades: 0, takeProfit: 20, maxLoss: -20, minPayout: 1.8 }, ls.get("pw3-sg", {}));
+const SG = Object.assign({ preset: "BALANCED", ...clone(PRESETS.BALANCED), auto: false, sound: true, trig: "CONF", rev: false, xWin: 12, zMode: "BOTH", cooldown: 10, maxTrades: 0, takeProfit: 20, maxLoss: -20, minPayout: 1.8, maxStakePct: 2, maxStakeAbs: 0 }, ls.get("pw3-sg", {}));
 SG.req = Object.assign({}, PRESETS.BALANCED.req, SG.req); SG.auto = false;      // auto always starts OFF
 
 /* ---------- STATE ---------- */
@@ -70,7 +70,7 @@ const S = {
     contract: null, paper: null, subCon: null, unconfirmedUntil: 0,
     rank: [], rankAt: 0, scanning: false, switching: false, want: null, busy: false, cool: 0, lastTick: 0, staleHits: 0,
     stake: Math.max(0.35, Number(ls.get("pw3-stake", 0.35)) || 0.35), dur: Math.min(10, Math.max(5, Number(ls.get("pw3-dur", 5)) || 5)),
-    pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, ratio: 1.9, marks: [], hist: [], res: null, zones: [], zN: 0, sigOk: false, sigCool: 0, execMs: null, specs: {}, bar: 0, barKey: "", barMap: {}, cs: [], tn: 0, zmem: [], zev: null, amNext: 0, amBusy: false, amOut: 0
+    pl: 0, wins: 0, losses: 0, trades: 0, autoTrades: 0, ratio: 1.9, marks: [], hist: [], res: null, zones: [], zN: 0, sigOk: false, sigCool: 0, execMs: null, specs: {}, barUp: "", barDn: "", barBlock: 0, quoteBlock: 0, badTypeAt: 0, hlLegacy: false, cfFull: undefined, pip: {}, bar: 0, barKey: "", barMap: {}, cs: [], tn: 0, zmem: [], zev: null, amNext: 0, amBusy: false, amOut: 0
 };
 const V = { tf: "TICK", span: SPAN.TICK, off: 0, ys: 1, cx: null, ema: true, zones: true, sr: true, st: true };   // chart view
 const D = { tool: "cursor", items: ls.get("pw3-draw", {}), tmp: null };                                           // drawings
@@ -84,7 +84,7 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const round2 = v => Math.round(num(v) * 100) / 100;
 const money = v => `${num(v) < 0 ? "-" : ""}$${Math.abs(num(v)).toFixed(2)}`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const dec = () => DEC[S.sym] ?? 2;
+const dec = () => S.pip?.[S.sym] ?? DEC[S.sym] ?? 2;
 const wsOpen = () => Boolean(S.ws && S.ws.readyState === WebSocket.OPEN);
 const ready = () => S.authed && wsOpen();
 const inTrade = () => Boolean(S.contract || S.paper);
@@ -426,7 +426,7 @@ async function useMarket(sym, force = false) {
 async function loadMarket(sym, force) {
     if (!force && sym === S.sym && S.subTick) return true;
     const g = ++S.gen; S.lastTick = Date.now();
-    await disarm(); await dropTick();
+    S.quoteBlock = 0; await disarm(); await dropTick();
     let T = [];
     try { T = await fetchHistory(sym, 3, 5000); } catch (e) { log(`History ${sym} failed → ${e.message}`, "warn"); }
     if (g !== S.gen) return false;
@@ -450,6 +450,7 @@ function onTick(m) {
     const t = m.tick;
     if (!t || t.symbol !== S.sym) return;
     const q = Number(t.quote), e = Number(t.epoch);
+    if (t.pip_size != null) { const pz = Number(t.pip_size); if (Number.isFinite(pz) && pz > 0) S.pip[t.symbol] = pz >= 1 ? Math.round(pz) : Math.round(-Math.log10(pz)); }
     if (!Number.isFinite(q) || !Number.isFinite(e)) return;
     const T = S.ticks, last = T[T.length - 1];
     if (last && e <= last.e) return;
@@ -546,7 +547,7 @@ function onProposal(m) {
     if (!p || !pt || pt.g !== S.pgen) return;
     const side = pt.side;
     if (side !== "RISE" && side !== "FALL") return;
-    if ((O.mode === "RF" || O.mode === "HL") && sideMatches(p.longcode, side) === false) return void fixRF();
+    if ((O.mode === "RF" || O.mode === "HL") && sideMatches(p.longcode, side) === false) { if (O.mode === "RF") fixRF(); return; }
     const ask = Number(p.ask_price), payout = Number(p.payout);
     if (!p.id || !(ask > 0) || ((O.mode === "RF" || O.mode === "HL") && !(payout > 0))) return;
     S.pp[side] = { id: String(p.id), ask, payout: payout > 0 ? payout : 0, ratio: payout > 0 ? payout / ask : NaN, at: Date.now(), stake: num(m.echo_req.amount), dir: side };
@@ -563,10 +564,11 @@ async function syncArm() {
     const can = () => ready() && S.sym && S.subTick && !inTrade() && !S.busy && !S.switching;
     if (!can()) { if (S.armKey || Object.keys(S.ppSub).length) await disarm(); manualUI(); return; }
     const st = stake();
+    if (Date.now() < S.quoteBlock) return;
     if (O.mode === "MU") fixMult();
     if (O.mode === "HL") {
-        try { await ensureBar(st); S.armFails = 0; }
-        catch (e) { if (S.armFails++ < 3) { log(`Barrier solve failed → ${e.message}`, "warn"); toast(`Barrier: ${e.message}`, 3000, "bad"); } manualUI(); return; }
+        if (Date.now() < S.barBlock) return; try { await ensureBar(st); S.armFails = 0; }
+        catch (e) { S.barBlock = Date.now() + 15000; if (S.armFails++ < 3) { log(`Barrier solve failed → ${e.message}`, "warn"); toast(`Barrier: ${e.message}`, 3000, "bad"); } manualUI(); return; }
         if (!can()) return;
     }
     const key = qKey(st);
@@ -574,25 +576,27 @@ async function syncArm() {
     await disarm();
     S.armKey = key; const g = ++S.pgen;
     await Promise.all(["RISE", "FALL"].map(async side => {
+        let rq = null;
         try {
-            const r = await sendWS(Object.assign(propReq(side, st), { subscribe: 1, passthrough: { side, g } }), { timeout: 7000, type: "quote" });
+            const r = await sendWS(Object.assign(rq = propReq(side, st), { subscribe: 1, passthrough: { side, g } }), { timeout: 7000, type: "quote" });
             const id = r.subscription?.id || null;
             if (g !== S.pgen) return void (await forget(id));
             S.ppSub[side] = id; S.armFails = 0;
         } catch (e) {
-            if (g === S.pgen) { S.armKey = ""; if (S.armFails++ < 3) log(`Quote ${side} unavailable → ${e.message}`, "warn"); }
+            if (g === S.pgen) quoteFail(side, e, rq);
         }
     }));
     manualUI();
 }
 async function oneShot(dir, st, retry = true) {          // fallback: single quote when no fresh pre-armed one exists
     if (O.mode === "HL") await ensureBar(st);
-    const r = await sendWS(propReq(dir, st), { timeout: 5000, type: "quote" });
+    const r = await sendWS(Object.assign(propReq(dir, st), { subscribe: 1, passthrough: { side: dir, g: -1 } }), { timeout: 5000, type: "quote" });   // new API: only streaming proposal ids can be bought
+    if (r.subscription?.id) setTimeout(() => forget(r.subscription.id), 8000);
     const p = r.proposal;
     if (!p?.id) throw new Error("Proposal ID missing.");
     const rfhl = O.mode === "RF" || O.mode === "HL";
     if (rfhl && sideMatches(p.longcode, dir) === false) {              // safety: never trade the opposite side
-        if (!retry) throw new Error("Contract side does not match the signal.");
+        if (!retry || O.mode !== "RF") throw new Error("Contract side does not match the signal.");
         S.rfFixed = true; RF = { RISE: RF.FALL, FALL: RF.RISE };
         log(`Rise/Fall mapping corrected → RISE=${RF.RISE}, FALL=${RF.FALL}`, "warn");
         return oneShot(dir, st, false);
@@ -612,9 +616,10 @@ async function execute(dir, src, res) {
     manualUI();
     log(src === "auto" ? `AUTO ${dir} · ${S.sym} · Q ${res.score} · 5m z ${res.f5.z.toFixed(2)} · 1m z ${res.f1.z.toFixed(2)}` : `MANUAL ${dir} · ${S.sym}`, "trade");
     try {
-        if (st > S.bal * 0.95 && S.exec === "LIVE") throw new Error("Stake exceeds balance protection.");
+        if (S.exec === "LIVE" && st > riskCap() + 0.001) throw new Error(`Stake ${money(st)} is above your risk cap ${money(riskCap())} (Signals → Max stake). Lower the stake or raise the cap.`);
         if (S.exec === "PAPER" && O.mode === "VN") throw new Error("Vanillas cannot be paper-simulated — use LIVE on a demo account.");
         const p = fresh(dir, st) || await oneShot(dir, st);
+        if (S.exec === "LIVE" && p.ask > riskCap() * 1.05 + 0.01) throw new Error(`Buy price ${money(p.ask)} (stake + commission) exceeds your risk cap ${money(riskCap())}.`);
         if (src === "auto" && minPayFail(p)) {
             log(`Payout ${p.ratio.toFixed(2)}x below minimum — skipped.`, "warn");
             S.busy = false; S.cool = Date.now() + 3000; manualUI(); return false;
@@ -679,7 +684,7 @@ function onContract(m) {
     }
 }
 function startPaper(dir, p, src) {
-    S.paper = { dir, src, stake: p.ask, payout: p.payout, entry: null, ee: NaN, n: 0, pl: 0, mode: O.mode, secs: durSec(), tk: O.mode !== "MU" && DM().u === "t" ? dur() : 0, bar: S.bar, mult: O.mult, tp: O.tp, sl: O.sl };
+    S.paper = { dir, src, stake: p.ask, payout: p.payout, entry: null, ee: NaN, n: 0, pl: 0, mode: O.mode, secs: durSec(), tk: O.mode !== "MU" && DM().u === "t" ? dur() : 0, bar: Math.abs(parseFloat(dir === "RISE" ? S.barUp : S.barDn)) || S.bar, mult: O.mult, tp: O.tp, sl: O.sl };
     if (p.payout > 0) S.ratio = p.payout / p.ask; S.trades++;
     log(`PAPER ${dir} · ${O.mode} · stake ${money(p.ask)}${p.payout > 0 ? ` · payout ${money(p.payout)}` : ` · ×${O.mult}`}`, "trade");
     contractUI(); ui();
@@ -1006,7 +1011,7 @@ const PSCHEMA = [
 const SSCHEMA = [["z5Min", "5m trend z ≥", 0.2, 4, 0.1], ["z1Min", "1m trend z ≥", 0, 3, 0.1], ["holdMin", "Ticks held before cross", 1, 10, 1], ["crossMin", "Cross strength σ", 0, 2, 0.05],
 ["crossWin", "Cross window (ticks)", 1, 6, 1], ["maxFlips", "Max chop flips", 0, 12, 1], ["volCap", "Volatility ceiling", 1, 4, 0.1], ["volMin", "Volatility floor", 0.1, 1.5, 0.05],
 ["zoneRoom", "Zone room ×", 0, 4, 0.1], ["srLow", "StochRSI zone", 10, 45, 5], ["minQ", "Min score Q", 0, 100, 5], ["xWin", "Double-cross window (bars)", 2, 40, 1]];
-const AFIELDS = [["cooldown", "Cooldown (s)", 0, 600, 1], ["maxTrades", "Max auto trades (0=∞)", 0, 999, 1], ["takeProfit", "Session take profit $", 1, 99999, 1], ["maxLoss", "Session max loss $", -99999, -1, 1], ["minPayout", "Min payout ×", 1, 3, 0.01]];
+const AFIELDS = [["cooldown", "Cooldown (s)", 0, 600, 1], ["maxTrades", "Max auto trades (0=∞)", 0, 999, 1], ["takeProfit", "Session take profit $", 1, 99999, 1], ["maxLoss", "Session max loss $", -99999, -1, 1], ["minPayout", "Min payout ×", 1, 3, 0.01], ["maxStakePct", "Max stake % of balance", 0, 100, 0.1], ["maxStakeAbs", "Max stake $ (0=off)", 0, 99999, 1]];
 const nf = (attr, f) => `<label>${f[1]}<input type="number" data-${attr}="${f[0]}" min="${f[2]}" max="${f[3]}" step="${f[4]}"></label>`;
 function buildPanes() {
     let h = `<p class="note">Indicators run on the <b>tick stream</b> — what the contract settles on — whichever candle timeframe you view.</p>`;
@@ -1459,24 +1464,65 @@ function optDesc() {
 /* ---- contract specs (best effort: falls back to safe defaults, the server validates every quote) ---- */
 async function loadSpecs(sym) {
     if (S.specs[sym]?.done) return;
-    const sp = S.specs[sym] = { done: true, mult: null, vnBars: null, RF: {}, HL: {}, VN: {} };
+    const sp = S.specs[sym] = { done: true, mult: null, vnBars: null, RF: {}, HL: {}, VN: {}, has: {}, seen: 0, types: new Set() };
     try {
-        const r = await sendWS({ contracts_for: sym, currency: S.cur, product_type: "basic" }, { timeout: 8000, type: "contracts" });
+        const r = await specReq(sym);
         const parse = s => { const m = /^(\d+)([tsmhd])$/.exec(String(s || "")); return m ? { v: +m[1], u: m[2] } : null; };
         const toSec = x => x.u === "t" ? x.v * tickSec() : x.v * U_SEC[x.u];
         (r.contracts_for?.available || []).forEach(c => {
             const cat = c.contract_category, ct = String(c.contract_type || "");
-            if (cat === "multiplier" || /^MULT/.test(ct)) { if (Array.isArray(c.multiplier_range)) sp.mult = c.multiplier_range.map(Number); return; }
-            const key = /^VANILLA/.test(ct) ? "VN" : (cat === "callput" && (ct === "CALL" || ct === "PUT")) ? (/non_atm/.test(c.barrier_category || "") ? "HL" : "RF") : null;
+            sp.seen++; sp.types.add(ct);
+            if (cat === "multiplier" || /^MULT/.test(ct)) { sp.has.MU = true; if (Array.isArray(c.multiplier_range)) sp.mult = c.multiplier_range.map(Number); return; }
+            const hasBar = Number(c.barriers) >= 1 || /non_atm|euro_non/.test(c.barrier_category || "");
+            const key = /^VANILLA/.test(ct) ? "VN" : (ct === "HIGHER" || ct === "LOWER") ? "HL" : ((ct === "CALL" || ct === "PUT") && (cat === "callput" || !cat)) ? (hasBar ? "HL" : "RF") : null;
             if (!key) return;
+            sp.has[key] = true;
             if (key === "VN" && Array.isArray(c.barrier_choices)) sp.vnBars = c.barrier_choices.map(String);
             const a = parse(c.min_contract_duration), b = parse(c.max_contract_duration), rg = sp[key]; if (!a || !b) return;
             if (a.u === "t") { if (b.u === "t" && key === "RF") rg.t = [Math.min(rg.t?.[0] ?? 1e9, a.v), Math.max(rg.t?.[1] ?? 0, b.v)]; return; }
             const s0 = toSec(a), s1 = toSec(b);
             ["s", "m", "h", "d"].forEach(u => { const lo = Math.max(1, Math.ceil(s0 / U_SEC[u])), hi = Math.floor(s1 / U_SEC[u]); if (hi >= lo) rg[u] = [Math.min(rg[u]?.[0] ?? 1e9, lo), Math.max(rg[u]?.[1] ?? 0, hi)]; });
         });
-        log(`Contract specs loaded for ${sym}.`);
+        log(`Contract specs ${sym}: modes ${Object.keys(sp.has).join("/") || "?"} · types ${[...sp.types].join(",")}`);
     } catch (e) { sp.done = false; log(`contracts_for ${sym} unavailable → defaults in use (${e.message})`, "warn"); setTimeout(() => { if (S.specs[sym] && !S.specs[sym].done) delete S.specs[sym]; }, 30000); }
+}
+
+/* ---- v3.2: new-API helpers ---- */
+async function specReq(sym) {          // contracts_for: this gateway validates currency + product_type; fall back to the bare form if it ever stops
+    const full = { contracts_for: sym, currency: S.cur || "USD", product_type: "basic" }, plain = { contracts_for: sym };
+    const order = S.cfFull === false ? [plain, full] : [full, plain]; let err;
+    for (const q of order) {
+        try { const r = await sendWS(Object.assign({}, q), { timeout: 8000, type: "contracts" }); S.cfFull = "product_type" in q; return r; }
+        catch (e) { err = e; if (!/validation|currency|product_type|additional|invalid/i.test(e.message)) throw e; }
+    }
+    throw err;
+}
+const hlType = side => S.hlLegacy ? (side === "RISE" ? "CALL" : "PUT") : (side === "RISE" ? "HIGHER" : "LOWER");
+function riskCap() {
+    const a = SG.maxStakePct > 0 && S.bal > 0 ? S.bal * SG.maxStakePct / 100 : Infinity, b = SG.maxStakeAbs > 0 ? SG.maxStakeAbs : Infinity;
+    return Math.min(a, b, S.bal > 0 ? S.bal * 0.95 : Infinity);
+}
+function quoteFail(side, e, rq) {
+    S.armKey = ""; const msg = String(e.message || ""); S.armFails++;
+    const d = rq ? `${rq.contract_type}${rq.barrier ? " " + rq.barrier : ""} ${rq.duration ? rq.duration + rq.duration_unit : "x" + (rq.multiplier || "")} stake ${rq.amount}` : "";
+    if (S.armFails <= 4) log(`Quote ${side} [${d}] → ${msg}`, "warn");
+    S.quoteBlock = Date.now() + Math.min(30000, 2000 * 2 ** Math.min(S.armFails, 4));       // back-off: never hammer the server
+    const mx = /lower than ([\d.]+)/i.exec(msg), mn = /(?:higher|greater) than ([\d.]+)/i.exec(msg);
+    if (/amount|stake/i.test(msg) && mx) { const v = Math.floor(Number(mx[1]) * 100) / 100; if (v >= 0.35 && v < S.stake) { toast(`Server max stake is ${mx[1]} — stake lowered.`, 4000, "bad"); S.quoteBlock = 0; return void setStake(v); } }
+    if (/amount|stake/i.test(msg) && mn) { const v = Math.ceil(Number(mn[1]) * 100) / 100; if (v > S.stake) { toast(`Server min stake is ${mn[1]} — stake raised.`, 4000, "bad"); S.quoteBlock = 0; return void setStake(v); } }
+    const list = barList(msg);
+    if (list && (O.mode === "HL" || O.mode === "VN")) {
+        const dg = (/\.(\d+)/.exec(list[0]) || [])[1]; if (dg) S.pip[S.sym] = dg.length;
+        if (O.mode === "VN") { (S.specs[S.sym] = S.specs[S.sym] || { done: false, RF: {}, HL: {}, VN: {}, has: {}, seen: 0, types: new Set() }).vnBars = list; renderOpt(); }
+        else { S.barMap = {}; S.barKey = ""; S.barUp = S.barDn = ""; }
+        log(`Learned server barriers: ${list.join(" ")}`); S.quoteBlock = Date.now() + 1500; return;
+    }
+    if (/invalid contract type/i.test(msg) && Date.now() - S.badTypeAt > 2000) {
+        S.badTypeAt = Date.now();
+        if (O.mode === "HL" && !S.hlLegacy) { S.hlLegacy = true; S.quoteBlock = 0; log("HIGHER/LOWER rejected → retrying with CALL/PUT + barrier.", "warn"); return void armSoon(); }
+        if (O.mode === "HL") S.hlLegacy = false;
+        toast(`${rq?.contract_type || "This contract"} is not offered on ${S.sym} — pick another market or mode.`, 5000, "bad"); S.quoteBlock = Date.now() + 60000;
+    }
 }
 function multFallback(sym) {
     const v = Number((/\d+/.exec(String(sym || "").replace(/^1HZ/, "")) || [100])[0]);
@@ -1484,7 +1530,7 @@ function multFallback(sym) {
     return M[v] || M[100];
 }
 const multList = () => S.specs[S.sym]?.mult || multFallback(S.sym);
-function fixMult() { const l = multList(); if (!l.includes(O.mult)) { O.mult = l[Math.floor(l.length / 2)]; saveO(); renderOpt(); } }
+function fixMult() { const l = gggggggg ggggggggggggggggggggggggggggggggggggggggggggggg multList(); if (!l.includes(O.mult)) { O.mult = l[Math.floor(l.length / 2)]; saveO(); renderOpt(); } }
 function vnBarrier() {
     const l = S.specs[S.sym]?.vnBars; if (!l || !l.length) return O.vnBar || "+0.00";
     if (l.includes(O.vnBar)) return O.vnBar;
@@ -1496,14 +1542,14 @@ function propReq(side, st) {
     const up = side === "RISE", b = { proposal: 1, amount: st, basis: "stake", currency: S.cur, underlying_symbol: S.sym };
     if (O.mode === "MU") {
         const lo = {}; if (O.tp > 0) lo.take_profit = round2(O.tp); if (O.sl > 0) lo.stop_loss = round2(O.sl);
-        return Object.assign(b, { contract_type: up ? "MULTUP" : "MULTDN", multiplier: O.mult }, Object.keys(lo).length ? { limit_order: lo } : {});
+        return Object.assign(b, { contract_type: up ? "MULTUP" : "MULTDOWN", multiplier: O.mult }, Object.keys(lo).length ? { limit_order: lo } : {});
     }
     Object.assign(b, { duration: dur(), duration_unit: unit() });
-    if (O.mode === "HL") return Object.assign(b, { contract_type: RF[side], barrier: (up ? "+" : "-") + (S.bar || 0).toFixed(dec()) });
+    if (O.mode === "HL") return Object.assign(b, { contract_type: hlType(side), barrier: (up ? S.barUp : S.barDn) || (up ? "+0" : "-0") });
     if (O.mode === "VN") return Object.assign(b, { contract_type: up ? "VANILLALONGCALL" : "VANILLALONGPUT", barrier: vnBarrier() });
     return Object.assign(b, { contract_type: RF[side] });
 }
-const qKey = st => `${S.sym}|${st}|${S.cur}|${O.mode}|${O.mode === "MU" ? `${O.mult}|${O.tp}|${O.sl}` : `${unit()}${dur()}|${O.mode === "HL" ? S.bar : O.mode === "VN" ? vnBarrier() : ""}`}|${RF.RISE}`;
+const qKey = st => `${S.sym}|${st}|${S.cur}|${O.mode}|${O.mode === "MU" ? `${O.mult}|${O.tp}|${O.sl}` : `${unit()}${dur()}|${O.mode === "HL" ? S.barUp + S.barDn : O.mode === "VN" ? vnBarrier() : ""}`}|${RF.RISE}|${S.hlLegacy ? 1 : 0}`;
 function minPayFail(p) {
     if (O.mode === "RF") return p.ratio < SG.minPayout - 0.005;
     if (O.mode === "HL" && O.hlMode === "payout") return p.ratio < O.hlPay * 0.9;
@@ -1511,45 +1557,71 @@ function minPayFail(p) {
 }
 
 /* ---- Higher/Lower barrier from the payout you asked for ---- */
-async function probe(off, st) {
-    const r = await sendWS(Object.assign(propReq("RISE", st), { barrier: "+" + off.toFixed(dec()) }), { timeout: 5000, type: "barrier probe" });
+const barList = msg => { const m = /barriers? available (?:are|is)[:\s]+(.+)/i.exec(msg || ""), l = m ? m[1].match(/[+-]?\d+(?:\.\d+)?/g) : null; return l && l.length ? l.map(s => /^[+-]/.test(s) ? s : "+" + s) : null; };
+async function probe(side, barrier, st) {
+    const r = await sendWS(Object.assign(propReq(side, st), { barrier }), { timeout: 5000, type: "barrier probe" });
     const ask = Number(r.proposal?.ask_price), pay = Number(r.proposal?.payout);
     if (!(ask > 0) || !(pay > 0)) throw new Error("probe quote invalid");
     return pay / ask;
 }
+/* Barrier discovery: probe once; if the server answers with its own barrier list ("Barriers available are …") use that,
+   otherwise walk a ladder of offsets. Every candidate is quoted and the one closest to your target payout wins. */
 async function solveBar(st) {
-    const ck = `${S.sym}|${unit()}${dur()}|${O.hlPay}`, hit = S.barMap[ck];
-    if (hit && Date.now() - hit.at < 600000) return hit.off;
-    const sig = std(deltas(S.ticks.slice(-300))) || 0.01, steps = Math.max(1, durSec() / tickSec()), minB = Math.pow(10, -dec()), tg = O.hlPay;
-    let off = Math.max(minB, sig * Math.sqrt(steps) * 0.6), lo = null, hi = null, best = null;
-    for (let i = 0; i < 8; i++) {
-        off = Math.max(minB, Number(off.toFixed(dec())));
-        let r;
-        try { r = await probe(off, st); }
-        catch (e) {
-            if (/minimum|at least|too close|too small|too low/i.test(e.message)) { off *= 1.8; continue; }
-            if (/maximum|too far|too large|at most|too high|exceed/i.test(e.message)) { off /= 1.8; continue; }
-            throw e;
-        }
-        if (!best || Math.abs(r - tg) < Math.abs(best.r - tg)) best = { off, r };
-        if (Math.abs(r - tg) / tg < 0.03) break;
-        if (r < tg) lo = { off, r }; else hi = { off, r };
-        if (lo && hi && hi.off > lo.off) { const f = (Math.log(tg) - Math.log(lo.r)) / ((Math.log(hi.r) - Math.log(lo.r)) || 1); off = lo.off + (hi.off - lo.off) * clamp(f, 0.1, 0.9); }
-        else off *= clamp(Math.pow(tg / r, 1.4), 0.4, 2.5);
+    const mode = O.hlMode, tg = O.hlPay, ck = `${S.sym}|${unit()}${dur()}|${mode === "payout" ? tg : O.hlOff}`, hit = S.barMap[ck];
+    if (hit && Date.now() - hit.at < 300000) return hit;
+    const sig = std(deltas(S.ticks.slice(-300))) || 0.01, steps = Math.max(1, durSec() / tickSec()), minB = Math.pow(10, -dec());
+    const seed = mode === "offset" ? Math.max(minB, O.hlOff) : Math.max(minB, sig * Math.sqrt(steps) * 0.6);
+    const fmt = (sg, v) => sg + Math.max(minB, v).toFixed(dec());
+    let list = null, cur = null, lastErr = null;
+    for (const k of [1, 0.5, 2, 0.25, 4, 1.37]) {
+        const off = Math.max(minB, Number((seed * k).toFixed(dec())));
+        try { cur = { off, r: await probe("RISE", fmt("+", off), st) }; break; }
+        catch (e) { lastErr = e; if ((list = barList(e.message))) break; if (!/barrier|minimum|maximum|too |exceed|at least|at most/i.test(e.message)) throw e; }
     }
-    if (!best) throw new Error("no barrier found for that payout");
-    S.barMap[ck] = { off: best.off, at: Date.now() };
-    log(`Barrier solved ${S.sym}: ±${best.off.toFixed(dec())} → ${best.r.toFixed(2)}x (target ${tg}x)`);
-    return best.off;
+    if (!list && !cur) throw lastErr || new Error("no barrier accepted");
+    let up, dn, r = 0;
+    if (!list) {
+        let best = cur, lo = null, hi = null;
+        for (let i = 0; i < 6 && mode === "payout" && Math.abs(cur.r - tg) / tg >= 0.03; i++) {
+            if (cur.r < tg) lo = cur; else hi = cur;
+            let nx;
+            if (lo && hi && hi.off > lo.off) { const f = (Math.log(tg) - Math.log(lo.r)) / ((Math.log(hi.r) - Math.log(lo.r)) || 1); nx = lo.off + (hi.off - lo.off) * clamp(f, 0.1, 0.9); }
+            else nx = cur.off * clamp(Math.pow(tg / cur.r, 1.4), 0.4, 2.5);
+            nx = Math.max(minB, Number(nx.toFixed(dec()))); if (nx === cur.off) break;
+            try { const rr = await probe("RISE", fmt("+", nx), st); cur = { off: nx, r: rr }; if (Math.abs(rr - tg) < Math.abs(best.r - tg)) best = cur; }
+            catch (e) { list = barList(e.message); break; }
+        }
+        if (!list) {
+            up = fmt("+", best.off); dn = fmt("-", best.off); r = best.r;
+            try { await probe("FALL", dn, st); } catch (e) { if (!(list = barList(e.message))) throw e; }   // the LOWER side must be valid too
+        }
+    }
+    if (list) {
+        const dg = (/\.(\d+)/.exec(list[0]) || [])[1]; if (dg) S.pip[S.sym] = dg.length;
+        const ups = list.filter(x => parseFloat(x) > 0), dns = list.filter(x => parseFloat(x) < 0);
+        if (!ups.length || !dns.length) throw new Error("server offered no usable barriers");
+        if (mode === "offset") {
+            const near = a => a.slice().sort((x, y) => Math.abs(Math.abs(parseFloat(x)) - O.hlOff) - Math.abs(Math.abs(parseFloat(y)) - O.hlOff))[0];
+            up = near(ups); dn = near(dns); r = 0;
+        } else {
+            const pick = async (arr, side) => {
+                const rs = (await Promise.all(arr.map(b => probe(side, b, st).then(x => ({ b, r: x }), () => null)))).filter(Boolean);
+                if (!rs.length) throw new Error("no quotable barrier");
+                return rs.sort((x, y) => Math.abs(x.r - tg) - Math.abs(y.r - tg))[0];
+            };
+            const [u, d] = await Promise.all([pick(ups, "RISE"), pick(dns, "FALL")]);
+            up = u.b; dn = d.b; r = (u.r + d.r) / 2;
+        }
+    }
+    const out = { up, dn, r, at: Date.now() }; S.barMap[ck] = out;
+    log(`Barriers ${S.sym}: ${out.up} / ${out.dn}${out.r ? ` → ≈${out.r.toFixed(2)}x (target ${tg}x)` : ""}`);
+    return out;
 }
 async function ensureBar(st) {
     if (O.mode !== "HL") return;
-    if (O.hlMode === "offset") { S.bar = Math.max(Math.pow(10, -dec()), O.hlOff); }
-    else {
-        const key = `${S.sym}|${unit()}${dur()}|${O.hlPay}`;
-        if (S.barKey !== key || !S.bar) { S.bar = await solveBar(st); S.barKey = key; }
-    }
-    set("oBarRead", `±${S.bar.toFixed(dec())}`);
+    const key = `${S.sym}|${unit()}${dur()}|${O.hlMode}|${O.hlPay}|${O.hlOff}`;
+    if (S.barKey !== key || !S.barUp) { const b = await solveBar(st); S.barUp = b.up; S.barDn = b.dn; S.bar = Math.abs(parseFloat(b.up)); S.barKey = key; }
+    set("oBarRead", `${S.barUp} / ${S.barDn}`);
 }
 
 /* ---- timeframe candles carrying their own EMA / Supertrend / StochRSI ---- */
@@ -1583,7 +1655,7 @@ function renderOpt() {
     else if (O.mode === "HL") {
         h = seg + chips + `<label>Barrier<select id="oHlMode"><option value="payout"${O.hlMode === "payout" ? " selected" : ""}>by payout</option><option value="offset"${O.hlMode === "offset" ? " selected" : ""}>fixed offset</option></select></label>`
           + (O.hlMode === "payout" ? `<label>Payout ×<input type="number" id="oHlPay" min="1.1" max="50" step="0.1" value="${O.hlPay}"></label>` : `<label>Offset<input type="number" id="oHlOff" min="0" step="any" value="${O.hlOff}"></label>`)
-          + `<span class="tag" id="oBarRead">${S.bar ? `±${S.bar.toFixed(dec())}` : "—"}</span>`;
+          + `<span class="tag" id="oBarRead">${S.barUp ? `${S.barUp} / ${S.barDn}` : "—"}</span>`;
     } else if (O.mode === "MU") {
         const l = multList();
         h = `<label>Multiplier<select id="oMult">${l.map(v => `<option value="${v}"${v === O.mult ? " selected" : ""}>×${v}</option>`).join("")}</select></label>`
@@ -1594,7 +1666,7 @@ function renderOpt() {
     }
     el.innerHTML = h;
 }
-function optChanged() { S.barKey = ""; saveO(); disarm(); renderOpt(); ui(); armSoon(150); reeval(); }
+function optChanged() { S.barKey = ""; S.barBlock = 0; S.quoteBlock = 0; saveO(); disarm(); renderOpt(); ui(); armSoon(150); reeval(); }
 function setDur(v) { const [a, b] = durLimits(O.mode, unit()); DM().v = clamp(Math.floor(num(v, a)), a, b); optChanged(); }
 function setUnit(u) { const [a, b] = durLimits(O.mode, u); DM().u = u; DM().v = CHIPS[u].find(v => v >= a && v <= b) || a; optChanged(); }
 function setMode(m) {
@@ -1667,13 +1739,13 @@ function amTick() {
     const now = Date.now();
     if (now >= S.amNext) return void autoSelect("timer");
     const sc = S.res?.score, [a, b] = AMCAT[AM.cat].r;
-    if (sc != null && (sc < a || sc > b)) { S.amOut = S.amOut || now; if (now - S.amOut > 15000 && now - S.rankAt > 20000) { S.amOut = 0; autoSelect("conditions changed"); } }
+    if (sc != null && (sc < a || sc > b)) { S.amOut = S.amOut || now; if (now - S.amOut > 30000 && now - S.rankAt > 45000) { S.amOut = 0; autoSelect("conditions changed"); } }
     else S.amOut = 0;
 }
 
 async function boot() {
     wire(); ui(); contractUI(true); renderTrades(); renderHud(); link("off"); redraw();
-    set("ver", "v3.1"); setInterval(amTick, 4000);
+    set("ver", "v3.2"); setInterval(amTick, 4000);
     log("PSYCHIC WINNER Manual Pro ready. PAPER by default — switch to LIVE when you are ready.");
     log("Keys: R / ↑ = RISE · F / ↓ = FALL · M = full screen · Esc = cancel / close.");
     await oauthCallback();
