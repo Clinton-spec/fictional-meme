@@ -173,7 +173,7 @@ input:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(34,2
 details summary{cursor:pointer;color:var(--cyan);font-size:11px;font-weight:800;letter-spacing:.08em;margin-bottom:8px}
 
 /* ---------- dock ---------- */
-.dock{display:grid;grid-template-columns:1fr minmax(210px,300px) 1fr;gap:10px;padding:10px;border-top:1px solid var(--line);background:rgba(6,11,22,.7);flex:none}
+.dock{display:grid;grid-template-columns:1fr minmax(250px,390px) 1fr;gap:10px;padding:10px;border-top:1px solid var(--line);background:rgba(6,11,22,.7);flex:none}
 .chartbox.fs .dock{padding:10px calc(10px + env(safe-area-inset-right)) 10px calc(10px + env(safe-area-inset-left))}
 .trade{border:0;border-radius:14px;padding:12px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#04101f;font-weight:900;transition:transform .05s,filter .15s,opacity .15s;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 .trade span{font-size:clamp(18px,2.6vw,28px);letter-spacing:.1em}
@@ -216,3 +216,19 @@ details summary{cursor:pointer;color:var(--cyan);font-size:11px;font-weight:800;
   .stats{gap:4px 14px}
   .meter .mc span{display:none}
 }
+
+/* ---------- v3.1: trade options ---------- */
+.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:2px}
+.modes button{border:0;background:transparent;color:var(--mut);font-weight:800;font-size:9px;letter-spacing:.03em;padding:5px 1px;border-radius:7px;white-space:nowrap}
+.modes button.on{background:rgba(34,211,238,.2);color:var(--cyan)}
+.opt{display:flex;flex-wrap:wrap;gap:5px 8px;align-items:center;justify-content:center;min-height:26px}
+.useg{display:flex;gap:1px;background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:1px}
+.useg button{border:0;background:transparent;color:var(--mut);font-family:var(--mono);font-size:11px;font-weight:800;padding:3px 7px;border-radius:6px}
+.useg button.on{background:rgba(34,211,238,.2);color:var(--cyan)}
+.chips{display:flex;gap:3px;align-items:center}
+.chips button{border:1px solid var(--line);background:var(--bg2);border-radius:7px;padding:3px 6px;font-family:var(--mono);font-size:11px;font-weight:800;color:var(--mut)}
+.chips button.on{background:rgba(34,211,238,.2);color:var(--cyan);border-color:var(--cyan)}
+.opt input[type=number]{width:60px;padding:3px 6px;font-size:11px}
+.opt label{flex-direction:row;align-items:center;gap:4px;font-size:9px}
+.opt select{width:auto;padding:3px 5px;font-size:11px}
+#tcClose{margin-top:7px;width:100%}
