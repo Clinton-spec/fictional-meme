@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#060b16">
 <title>PSYCHIC WINNER — Manual Pro</title>
-  <meta name="deriv-site-verification" content="bbb6e0325ef9b2d78f2baba74d6dec44167183888dcc24fdb10828fadf6bf448">
+    <meta name="deriv-site-verification" content="bbb6e0325ef9b2d78f2baba74d6dec44167183888dcc24fdb10828fadf6bf448">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
 <header class="top">
   <div class="brand">
     <div class="logo">PW</div>
-    <div><div class="brand-name">PSYCHIC WINNER</div><div class="brand-sub">MANUAL PRO · RISE / FALL · <span id="ver">v3.1</span></div></div>
+    <div><div class="brand-name">PSYCHIC WINNER</div><div class="brand-sub">MANUAL PRO · RISE/FALL · HIGHER/LOWER · MULTIPLIER · <span id="ver">v3.1</span></div></div>
   </div>
   <button id="logoutBtn" class="ghost" hidden>LOG OUT</button>
 </header>
@@ -30,6 +30,7 @@
       <button data-tf="TICK" class="on">TICK</button><button data-tf="5S">5s</button><button data-tf="15S">15s</button>
       <button data-tf="30S">30s</button><button data-tf="1M">1m</button><button data-tf="5M">5m</button>
     </div>
+    <span class="tfnote" id="tfNote" title="Indicators and signals follow the chart timeframe you view">signals: ticks</span>
     <div class="grp" id="indBtns">
       <button id="tgEma" class="on" title="EMA line">EMA</button>
       <button id="tgZones" class="on" title="Supply / demand zones">S/D</button>
@@ -71,7 +72,8 @@
         <span class="chip mut" id="hBias">BIAS —</span>
         <span class="badge" id="sigBadge">WAITING</span>
         <button class="chip auto" id="autoChip" title="Auto entry on/off">AUTO OFF</button>
-        <button class="chip auto" id="amChip" title="Auto-select market by score band">MKT AUTO OFF</button>
+        <button class="chip auto" id="revChip" title="Reverse: a buy signal opens a sell and vice versa">⇄ REVERSE OFF</button>
+        <button class="chip auto" id="asChip" title="Auto-select market by score band (set the band in the market list)">SELECT OFF</button>
       </div>
       <div class="read" id="hRead">—</div>
     </div>
@@ -79,7 +81,7 @@
     <div class="tcard" id="tradeCard" hidden>
       <div class="tc-h"><b id="tcSide">—</b><span id="tcN">0 / 5</span><b id="tcPL">—</b></div>
       <div class="bar"><i id="tcBar"></i></div>
-      <button id="tcClose" class="btn sm" hidden>CLOSE NOW</button>
+      <button id="tcClose" class="btn sm full" hidden>CLOSE TRADE NOW</button>
     </div>
 
     <div class="zoom"><button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button><button id="goLive" title="Back to live edge">LIVE ▸</button></div>
@@ -91,7 +93,14 @@
         <label class="switch sm"><input type="checkbox" id="rankAuto"><span></span> refresh 60s</label>
         <button id="scanBtn" class="btn sm pri">SCAN</button><button id="rankClose" class="btn sm">✕</button>
       </div>
-      <div class="rk-note">Score 0-100 = 5m/1m trend alignment · EMA position · StochRSI timing · Supertrend side · zone room · volatility · chop. Click a row to switch market.</div>
+      <div class="rk-as">
+        <label class="switch sm"><input type="checkbox" id="asOn"><span></span> AUTO-SELECT market</label>
+        <select id="asCat" title="Only markets whose score is inside this band are picked">
+          <option value="vhigh">VERY HIGH · 75+</option><option value="high">HIGH · 56–74</option><option value="med">MEDIUM · 50–55</option><option value="low">LOW · 25–49</option><option value="vlow">VERY LOW · under 25</option>
+        </select>
+        <span class="tag" id="asState"></span>
+      </div>
+      <div class="rk-note">Auto-select scans every 60 s (never during a trade), again after each trade, and when the market's score leaves your band. Score 0-100 = 5m/1m trend alignment · EMA position · StochRSI timing · Supertrend side · zone room · volatility · chop. Click a row to switch market.</div>
       <div class="tbl"><table>
         <thead><tr><th>#</th><th>MARKET</th><th>BIAS</th><th title="5-minute drift z-score">5M z</th><th title="1-minute drift z-score">1M z</th><th title="Recent / baseline volatility">VOL</th><th title="EMA crossings in last 30 ticks">CHOP</th><th title="Supertrend side">ST</th><th title="Stochastic RSI %K">K</th><th title="Distance to opposing zone">ZONE</th><th>SCORE</th></tr></thead>
         <tbody id="rankRows"></tbody></table></div>
@@ -139,15 +148,16 @@
   </div>
 
   <!-- ===== trade dock (directly under the chart) ===== -->
+  <div class="kinds" id="kindTabs"><button data-k="RF" class="on" title="Rise/Fall — Call/Put">RISE / FALL</button><button data-k="HL" title="Higher/Lower with a barrier">HIGHER / LOWER</button><button data-k="MULT" title="Multipliers — driven by take-profit / stop-loss">MULTIPLIER</button></div>
   <div class="dock" id="dock">
     <button id="mRise" class="trade rise" disabled><span>▲ RISE</span><em>—</em><kbd>R · ↑</kbd></button>
     <div class="mid">
-      <div class="modes" id="modeBtns"><button data-m="RF" class="on">RISE/FALL</button><button data-m="HL">HIGH/LOW</button><button data-m="MU">MULTIPLIER</button><button data-m="VN">VANILLA</button></div>
       <div class="stkrow">
         <div class="stk"><button id="mMinus" title="Lower stake">−</button><input id="dStake" type="number" value="0.35" min="0.35" step="0.05" inputmode="decimal" title="Stake"><button id="mPlus" title="Raise stake">+</button></div>
         <button id="mHalf" class="mini" title="Halve stake">½</button><button id="mDouble" class="mini" title="Double stake">×2</button>
       </div>
-      <div class="opt" id="optRow"></div>
+      <div class="optrow" id="optRow"></div>
+      <div class="durpop" id="durPop" hidden></div>
       <div class="mst" id="mStatus">Connect to trade</div>
     </div>
     <button id="mFall" class="trade fall" disabled><span>▼ FALL</span><em>—</em><kbd>F · ↓</kbd></button>
@@ -155,6 +165,7 @@
 
   <div class="stats">
     <div><small>SESSION P/L</small><b id="kPL">$0.00</b></div>
+    <div><small id="kTPl">LAST TRADE</small><b id="kTP">—</b></div>
     <div><small>W / L</small><b id="kWL">0 / 0</b></div>
     <div><small>WIN RATE</small><b id="kWR">—</b><em id="kBE">breakeven —</em></div>
     <div><small>TRADES</small><b id="kTrades">0</b></div>
