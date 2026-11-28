@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#060b16">
 <title>PSYCHIC WINNER — Manual Pro</title>
-<meta name="deriv-site-verification" content="bbb6e0325ef9b2d78f2baba74d6dec44167183888dcc24fdb10828fadf6bf448">
+  <meta name="deriv-site-verification" content="bbb6e0325ef9b2d78f2baba74d6dec44167183888dcc24fdb10828fadf6bf448">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
 <header class="top">
   <div class="brand">
     <div class="logo">PW</div>
-    <div><div class="brand-name">PSYCHIC WINNER</div><div class="brand-sub">MANUAL PRO · RISE / FALL · <span id="ver">v3.0</span></div></div>
+    <div><div class="brand-name">PSYCHIC WINNER</div><div class="brand-sub">MANUAL PRO · RISE / FALL · <span id="ver">v3.1</span></div></div>
   </div>
   <button id="logoutBtn" class="ghost" hidden>LOG OUT</button>
 </header>
@@ -71,6 +71,7 @@
         <span class="chip mut" id="hBias">BIAS —</span>
         <span class="badge" id="sigBadge">WAITING</span>
         <button class="chip auto" id="autoChip" title="Auto entry on/off">AUTO OFF</button>
+        <button class="chip auto" id="amChip" title="Auto-select market by score band">MKT AUTO OFF</button>
       </div>
       <div class="read" id="hRead">—</div>
     </div>
@@ -78,6 +79,7 @@
     <div class="tcard" id="tradeCard" hidden>
       <div class="tc-h"><b id="tcSide">—</b><span id="tcN">0 / 5</span><b id="tcPL">—</b></div>
       <div class="bar"><i id="tcBar"></i></div>
+      <button id="tcClose" class="btn sm" hidden>CLOSE NOW</button>
     </div>
 
     <div class="zoom"><button id="zoomOut" title="Zoom out">−</button><button id="zoomIn" title="Zoom in">+</button><button id="goLive" title="Back to live edge">LIVE ▸</button></div>
@@ -140,11 +142,12 @@
   <div class="dock" id="dock">
     <button id="mRise" class="trade rise" disabled><span>▲ RISE</span><em>—</em><kbd>R · ↑</kbd></button>
     <div class="mid">
+      <div class="modes" id="modeBtns"><button data-m="RF" class="on">RISE/FALL</button><button data-m="HL">HIGH/LOW</button><button data-m="MU">MULTIPLIER</button><button data-m="VN">VANILLA</button></div>
       <div class="stkrow">
         <div class="stk"><button id="mMinus" title="Lower stake">−</button><input id="dStake" type="number" value="0.35" min="0.35" step="0.05" inputmode="decimal" title="Stake"><button id="mPlus" title="Raise stake">+</button></div>
         <button id="mHalf" class="mini" title="Halve stake">½</button><button id="mDouble" class="mini" title="Double stake">×2</button>
       </div>
-      <div class="durs" id="durBtns" title="Duration in ticks"></div>
+      <div class="opt" id="optRow"></div>
       <div class="mst" id="mStatus">Connect to trade</div>
     </div>
     <button id="mFall" class="trade fall" disabled><span>▼ FALL</span><em>—</em><kbd>F · ↓</kbd></button>
